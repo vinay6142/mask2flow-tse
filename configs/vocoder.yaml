@@ -1,0 +1,44 @@
+# ─────────────────────────────────────────
+# HiFi-GAN Vocoder Config
+# Reuses this project's own audio/mel section (configs/default_v2.yaml)
+# so the vocoder's mel input exactly matches what Stage 2 outputs.
+# ─────────────────────────────────────────
+
+audio:
+  sample_rate: 16000
+  segment_length: 10
+
+mel:
+  n_mels: 80
+  n_fft: 1024
+  hop_length: 160
+  win_length: 400
+  f_min: 0.0
+  f_max: 8000.0
+  power: 2.0
+  log_offset: 1e-8
+
+data:
+  librispeech_path: "data/raw/LibriSpeech"
+  train_splits:
+    - "train-clean-100"
+
+vocoder:
+  segment_size: 8192          # waveform samples per training crop (~0.51s at 16kHz)
+  batch_size: 16
+  lr: 2.0e-4
+  max_steps: 200000
+  num_workers: 4
+  mel_loss_weight: 45         # standard HiFi-GAN convention
+
+  # Upsample rates multiply to 160 = this project's hop_length exactly
+  # (NOT the standard HiFi-GAN [8,8,2,2]=256 config, which targets a
+  # different hop length/sample rate entirely).
+  upsample_rates: [8, 5, 2, 2]
+  upsample_kernel_sizes: [16, 10, 4, 4]
+  upsample_initial_channel: 256   # lighter than the original paper's 512,
+                                  # sized for P100 GPUs — raise if quality
+                                  # needs it and compute time allows
+
+  resblock_kernel_sizes: [3, 7, 11]
+  resblock_dilation_sizes: [[1, 3, 5], [1, 3, 5], [1, 3, 5]]

@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# Envs
+.venv/
+venv/
+env/
+
+# Model checkpoints -- large binaries (some >1GB, over GitHub's 100MB hard limit)
+checkpoints/
+checkpoints_v2/
+checkpoints_speaker_encoder/
+checkpoints_vocoder/
+
+# Dataset (LibriSpeech etc.)
+data/raw/
+
+# TensorBoard / training logs
+logs/
+logs_v2/
+logs_vocoder/
+scripts/logs/
+
+# Generated audio + misc stray dirs
+outputs/*.wav
+*.wav
+*.flac
+training data/
+
+# OS cruft
+.DS_Store
+Thumbs.db

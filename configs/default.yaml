@@ -1,0 +1,116 @@
+# ─────────────────────────────────────────
+# Mask2Flow-TSE  —  Default Configuration
+# ─────────────────────────────────────────
+
+# Audio
+audio:
+  sample_rate: 16000
+  segment_length: 10          # seconds per training chunk
+
+# Mel Spectrogram
+# Parameters match Whisper exactly for plug-and-play ASR
+mel:
+  n_mels: 80
+  n_fft: 1024
+  hop_length: 160             # 10ms at 16kHz
+  win_length: 400             # 25ms at 16kHz
+  f_min: 0.0
+  f_max: 8000.0
+  power: 2.0
+  log_offset: 1e-8
+
+# Speaker Encoder (frozen WavLM)
+speaker_encoder:
+  model_name: "microsoft/wavlm-base-plus-sv"
+  embed_dim: 512
+  freeze: true
+
+# Masking Module (Stage 1)
+# Paper Section 5.2.2:
+#   "4 Conv2d layers producing 8-channel feature maps"
+#   "2-layer BiLSTM with 416 hidden units"
+masking:
+  conv_channels: [1, 4, 6, 8, 8]  # 1→4→6→8→8 channels
+  conv_kernel: 3
+  lstm_hidden: 416
+  lstm_layers: 2
+  lstm_dropout: 0.1
+  use_residual: true
+
+# Flow Matching Module (Stage 2)
+# Paper Section 5.2.3:
+#   "DiT backbone with 9 blocks, 768-dim hidden states, 8 heads"
+#   ffn_mult=2 gives ~72.6M params matching paper
+flow:
+  n_blocks: 9
+  hidden_dim: 768
+  n_heads: 8
+  ffn_mult: 2                 # 768*2=1536 FFN hidden dim → ~72.6M total
+  dropout: 0.1
+  rope: true                  # rotary position embeddings
+  cfg_dropout: 0.1            # classifier-free guidance dropout prob
+
+# Training — Stage 1 (Masking)
+train_masking:
+  batch_size: 10
+  grad_accumulation: 2        # effective batch = 20
+  lr: 2.0e-4
+  warmup_steps: 10000
+  max_steps: 200000
+  ema_decay: 0.9999
+  val_every: 2000
+  save_every: 5000
+  clip_grad_norm: 1.0
+
+# Training — Stage 2 (Flow)
+train_flow:
+  batch_size: 10
+  grad_accumulation: 2
+  lr: 2.0e-4
+  warmup_steps: 10000
+  max_steps: 300000
+  ema_decay: 0.9999
+  val_every: 2000
+  save_every: 5000
+  clip_grad_norm: 1.0
+
+# Data
+data:
+  librispeech_path: "data/raw/LibriSpeech"
+  libri2mix_path: "data/raw/Libri2Mix"
+  rir_path: "data/raw/RIRS"
+  output_path: "data/processed"
+
+  # Training splits (with 200GB use all three)
+  train_splits:
+    - "train-clean-100"       # 6.3 GB
+    - "train-clean-360"       # 23.1 GB
+    - "train-other-500"       # 30.3 GB  ← now possible with 200GB
+
+  # Evaluation splits
+  val_splits:
+    - "dev-clean"
+    - "dev-other"
+  test_splits:
+    - "test-clean"
+    - "test-other"
+
+  # On-the-fly mixture augmentation
+  conditions:
+    clean_prob: 0.33
+    additive_prob: 0.33
+    reverb_prob: 0.34
+  snr_min: 1.0                # dB
+  snr_max: 10.0               # dB
+
+# Inference
+inference:
+  flow_steps: 4               # single Euler step (paper's key result)
+  cfg_scale: 1.5              # classifier-free guidance scale
+  device: "cuda"
+
+# Paths
+paths:
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+  output_dir: "outputs"
