@@ -1,13 +1,20 @@
 # Known limitation: catastrophic Stage-2 outliers on hard extraction cases
 
-**Status:** characterized and documented, not fixed. Root cause isolated to a training-coverage
-gap in Stage 2 (flow matching), not a bug, and independently confirmed to persist (with different
-severity per-sample) in actual post-vocoder audio, not just mel-domain MSE — see "Audio-domain
-verification" below. Validated at full-test-set scale (n=2620 mel-domain, n=400 audio-domain) —
-see "Full-set validation" below — every number from the original n=60 investigation holds up. See
-`eval/diagnose_catastrophic.py`, `eval/audio_domain_quality.py`, and `eval/full_eval.py` for the
-diagnostic tooling used to reach this conclusion; rerun all three against any future Stage-2
-checkpoint to check whether a retrain has closed the gap.
+**Status (updated 2026-08-28): diagnosed AND substantially mitigated via targeted retraining.**
+Everything below through "Decision (2026-08-26)" describes the original investigation against
+`checkpoints_v2/flow/flow_best.pt` (step 298000) — kept verbatim as the record of how the root
+cause was found. See "Update 2026-08-28: hard-t0 retrain closes most of the gap" at the end of this
+file for what happened next: continuing Stage-2 training with the t≈0 hard-example reweighting this
+document's own "If revisited" section proposed cut the catastrophic rate from 12.7% to 3.5% (a 3.6x
+reduction, holding across every SNR bucket) on the full n=2620 test-clean set. The fine-tuned
+checkpoint (`checkpoints_v2/flow_finetune_hardt0/flow_ft_final.pt`, step 25000) has since been
+promoted to `checkpoints_v2/flow/flow_best.pt`, so it is now what every script's default checkpoint
+path loads. The original pre-finetune checkpoint is preserved at
+`checkpoints_v2/flow/flow_best_step298000.pt` for reproducing the numbers below. The tail did not
+fully disappear (see the update section) — do not describe this as "fixed," describe it as
+"reduced 3.6x." See `eval/diagnose_catastrophic.py`, `eval/audio_domain_quality.py`, and
+`eval/full_eval.py` for the diagnostic tooling used throughout; rerun all three against any future
+Stage-2 checkpoint to check whether further retraining closes the remaining gap.
 
 ## Summary
 
@@ -173,3 +180,100 @@ diagnostic). `eval/diagnose_catastrophic.py` part [C] is the tool to verify whet
 checkpoint has closed the gap — rerun it and check whether the cosine-similarity floor for hard
 samples has risen out of the 0.08–0.15 range. Samples 40 and 46 (near-total audio failures, not
 just high MSE) would be the highest-priority cases to fix first if any further work is done here.
+
+## Update 2026-08-28: hard-t0 retrain closes most of the gap
+
+The "If revisited" fix path above was executed: `training/finetune_flow_hard_t0.py`
+(`t_hard_prob=0.5`, `t_hard_max=0.25`, `lr=4e-5`) continued Stage-2 training from the checkpoint
+above for 25,000 steps (11.58h on a P100, `scripts/run_finetune_flow_hardt0_gpu.sh`, job 10606).
+The script's own training-time `val_loss` proxy got *worse* (0.75 to roughly 1.1) — expected, since
+hard-t0 reweighting deliberately oversamples the region the base model scored worst on, so it isn't
+comparable to the pre-finetune number. The real check used a new script, `eval/verify_eer.py`
+(corpus-wide speaker-verification EER/AUC, replacing an earlier unreliable in-batch metric), and
+`eval/full_eval.py` rerun against the fine-tuned checkpoints at full scale (n=2620):
+
+| Metric (n=2620) | `flow_best.pt` (pre-finetune, step 298000) | `flow_ft_final.pt` (step 25000) | `flow_ft_best.pt` (step 16000) |
+|---|---|---|---|
+| Median mel S2-vs-S1 | 67.3% | **77.7%** | 77.2% |
+| Catastrophic rate (S2 vs S1 < -30%) | 12.7% | **3.5%** (92/2620) | 4.0% (105/2620) |
+| Median SI-SDR gain vs S1 | +0.93 dB | 1.58 dB | **1.64 dB** |
+| SI-SDR-hurts rate | 28.5% | 18.2% | 18.1% |
+| Catastrophic @ 1-3dB SNR (hardest) | 22.1% | **9.9%** | 10.5% |
+| Catastrophic @ 7-10dB SNR (easiest) | 5.5% | **0.6%** | 1.0% |
+| Corpus-wide speaker-verification EER (n=400, `verify_eer.py`) | not measured | 13.8% | 13.2% |
+
+Both fine-tuned checkpoints are effectively tied with each other and both cut the catastrophic rate
+roughly 3.6x, with the reduction holding across every SNR bucket (hardest bucket improves the most,
+in absolute terms). `flow_ft_final.pt` (step 25000, the final checkpoint of the completed run) was
+chosen over `flow_ft_best.pt` (step 16000, "best" only by the untrusted training-time proxy) since
+neither difference between them is likely meaningful at this sample size, and the final checkpoint
+is the more defensible choice to cite. **`flow_ft_final.pt` has been promoted to
+`checkpoints_v2/flow/flow_best.pt`** — every script's default checkpoint path now loads the
+retrained model. The original pre-finetune checkpoint is preserved at
+`checkpoints_v2/flow/flow_best_step298000.pt` if the old numbers ever need reproducing.
+
+**This confirms the root-cause diagnosis above was correct and actionable** — the t≈0
+training-coverage gap was a real, fixable-by-retraining limitation, not an inherent ceiling. It is
+NOT fully eliminated: the worst individual samples in the n=2620 sweep still crash to -75dB/-59dB
+SI-SDR, and the catastrophic rate, while much lower, is not zero. Report this as "reduced 3.6x by
+targeted retraining," not "solved." If revisited again, the same tooling (`diagnose_catastrophic.py`
+part [C], sorting `full_eval.py`'s JSONL by `sisdr_gain_vs_s1`) would be the way to characterize
+what's left in the remaining ~3.5%.
+
+## Update 2026-08-30: cross-corpus validation on Libri2Mix — fix generalizes, plus a second,
+## distinct, well-characterized SNR-coverage limitation
+
+`eval/eval_libri2mix.py` (see also `scripts/generate_libri2mix_test.sh`,
+`scripts/run_eval_libri2mix_gpu.sh`) ran the current `checkpoints_v2/flow/flow_best.pt` (the
+hard-t0 fine-tuned checkpoint above) against Libri2Mix (JorisCos/LibriMix), a 2-speaker benchmark
+built independently of this project's own on-the-fly LibriSpeech mixer — `mix_clean` condition,
+16kHz, `min` mode, both directions per mixture (n=6000 samples from 3000 mixtures).
+
+**Raw aggregate looks bad at first glance:** median mel S2-vs-S1 23.9%, catastrophic rate 26.7%,
+median SI-SDR gain vs Stage 1 only +1.17dB, vs mixture **-0.61dB** (negative — extraction looks
+worse than doing nothing, in aggregate). This is NOT a generalization failure and NOT an eval-script
+bug (checked: source_1-as-target vs source_2-as-target split 27.2%/26.2% catastrophic, no meaningful
+asymmetry that would flag a target-index mix-up). The real cause: **Libri2Mix's `mix_clean`
+generation has no SNR floor** — each source is loudness-normalized to an independent random target
+level, so mixture SNR (for whichever source is treated as target) comes out roughly symmetric around
+0dB (this eval set: range -11.6 to +11.6dB). This project's OWN mixer (`data/augment.py`,
+`configs/default_v2.yaml`: `snr_min=1.0, snr_max=10.0`) never once trains or evaluates the model on
+a mixture where the target is quieter than the interferer — that entire regime (60.6% of this
+Libri2Mix eval set, `snr_db < 1.0`) is out-of-distribution by construction of the training data, not
+a property of Libri2Mix "being harder" in general.
+
+**Splitting exactly on that boundary (snr_db >= 1.0, matching the trained snr_min) recovers the
+expected result:**
+
+| | In-distribution (SNR≥1dB, n=2361, 39.4%) | Out-of-distribution (SNR<1dB, n=3639, 60.6%) |
+|---|---|---|
+| Median mel S2-vs-S1 | 73.4% | -19.0% |
+| Catastrophic rate | 5.7% | 40.3% |
+| Median SI-SDR gain vs S1 | +2.37dB | -1.50dB |
+| Median SI-SDR gain vs mixture | +2.59dB | -8.16dB |
+
+The in-distribution slice (73.4%/5.7%) is consistent with — and SI-SDR-wise actually exceeds — the
+existing test-clean headline above (77.7%/3.5%/+1.58dB), on a completely independently-constructed
+corpus. The full SNR-bucket breakdown (<0dB: 45.1% catastrophic → [0,1): 18.0% → [1,3): 10.1% →
+[3,5): 2.7% → [5,7): 0.8% → [7,10)+: 0.0%) is smoothly monotonic and lines up with the SAME
+SNR-dependence pattern already documented above for this project's own corpus (22.1%→5.5% across
+1-3dB to 7-10dB) — this is the same phenomenon extended into a harder regime Libri2Mix happens to
+generate and this project's own synthetic mixer structurally cannot (its `snr_min=1.0` floor
+excludes it by construction).
+
+**Conclusion:** the hard-t0 fix's benefit is confirmed on an independent external corpus, within the
+SNR range the model was actually trained for. Separately, this surfaces a second, distinct,
+well-explained limitation — no training coverage below 1dB SNR (i.e., the model has never been
+asked to extract the quieter of two overlapping speakers) — worth naming explicitly in the thesis as
+future work (extending `snr_min` downward, potentially negative, in a future training/fine-tuning
+run) rather than conflating it with the t≈0 catastrophic-outlier issue above, which is a distinct
+mechanism (single-shot prediction error at the start of the flow trajectory, not an SNR-coverage
+gap). Repro:
+```
+sbatch scripts/download_wham.sh                 # once; ~52GB WHAM noise (unused in mix_clean audio
+                                                  # itself, but required by LibriMix's own generation
+                                                  # script regardless of --types)
+sbatch scripts/generate_libri2mix_test.sh        # after WHAM finishes; ~1.4GB output
+sbatch scripts/run_eval_libri2mix_gpu.sh         # after generation finishes
+python3 eval/eval_libri2mix.py --output outputs/results/eval_libri2mix_min.jsonl --summarize_only
+```
