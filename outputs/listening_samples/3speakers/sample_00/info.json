@@ -1,0 +1,26 @@
+{
+  "sample_idx": 0,
+  "seed": 123,
+  "n_interferers": 2,
+  "n_total_speakers": 3,
+  "target_speaker": "2094",
+  "interferer_speakers": [
+    "8230",
+    "61"
+  ],
+  "snr_db_list": [
+    4.41,
+    6.06
+  ],
+  "mel_mix_mse": 10.613357543945312,
+  "mel_s1_mse": 9.334877967834473,
+  "mel_s2_mse": 6.346730709075928,
+  "mel_s2_vs_s1_pct": 32.01056584836901,
+  "sisdr_mixture_vs_target": -9.132640838623047,
+  "sisdr_stage1_vs_target": -7.81337308883667,
+  "sisdr_extracted_vs_target": -7.3152689933776855,
+  "speaker_sim_ref_vs_target_clean": 0.22369694709777832,
+  "speaker_sim_ref_vs_mixture": -0.3059857487678528,
+  "speaker_sim_ref_vs_stage1": -0.2795242965221405,
+  "speaker_sim_ref_vs_extracted": -0.24756383895874023
+}

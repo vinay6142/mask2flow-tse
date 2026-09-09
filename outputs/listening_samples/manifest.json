@@ -1,0 +1,326 @@
+[
+  {
+    "sample_dir": "outputs/listening_samples/2speakers/sample_00",
+    "sample_idx": 0,
+    "seed": 123,
+    "n_interferers": 1,
+    "n_total_speakers": 2,
+    "target_speaker": "2094",
+    "interferer_speakers": [
+      "8230"
+    ],
+    "snr_db_list": [
+      1.97
+    ],
+    "mel_mix_mse": 7.1003570556640625,
+    "mel_s1_mse": 6.445370197296143,
+    "mel_s2_mse": 2.679523468017578,
+    "mel_s2_vs_s1_pct": 58.42715955800881,
+    "sisdr_mixture_vs_target": -17.462636947631836,
+    "sisdr_stage1_vs_target": -21.751041412353516,
+    "sisdr_extracted_vs_target": -9.77800178527832,
+    "speaker_sim_ref_vs_target_clean": 0.22369694709777832,
+    "speaker_sim_ref_vs_mixture": -0.32362160086631775,
+    "speaker_sim_ref_vs_stage1": -0.26897165179252625,
+    "speaker_sim_ref_vs_extracted": -0.23140272498130798
+  },
+  {
+    "sample_dir": "outputs/listening_samples/2speakers/sample_01",
+    "sample_idx": 1,
+    "seed": 124,
+    "n_interferers": 1,
+    "n_total_speakers": 2,
+    "target_speaker": "1188",
+    "interferer_speakers": [
+      "5105"
+    ],
+    "snr_db_list": [
+      4.75
+    ],
+    "mel_mix_mse": 10.688945770263672,
+    "mel_s1_mse": 9.63538932800293,
+    "mel_s2_mse": 1.5678157806396484,
+    "mel_s2_vs_s1_pct": 83.7285684338341,
+    "sisdr_mixture_vs_target": -11.497115135192871,
+    "sisdr_stage1_vs_target": -10.328961372375488,
+    "sisdr_extracted_vs_target": -8.62717056274414,
+    "speaker_sim_ref_vs_target_clean": 0.5421116948127747,
+    "speaker_sim_ref_vs_mixture": -0.023795410990715027,
+    "speaker_sim_ref_vs_stage1": -0.06658859550952911,
+    "speaker_sim_ref_vs_extracted": 0.5733664035797119
+  },
+  {
+    "sample_dir": "outputs/listening_samples/2speakers/sample_02",
+    "sample_idx": 2,
+    "seed": 125,
+    "n_interferers": 1,
+    "n_total_speakers": 2,
+    "target_speaker": "672",
+    "interferer_speakers": [
+      "4446"
+    ],
+    "snr_db_list": [
+      2.63
+    ],
+    "mel_mix_mse": 4.615389823913574,
+    "mel_s1_mse": 4.389342784881592,
+    "mel_s2_mse": 0.9557162523269653,
+    "mel_s2_vs_s1_pct": 78.22643846320727,
+    "sisdr_mixture_vs_target": -7.871652603149414,
+    "sisdr_stage1_vs_target": -18.516979217529297,
+    "sisdr_extracted_vs_target": -16.257049560546875,
+    "speaker_sim_ref_vs_target_clean": 0.49560409784317017,
+    "speaker_sim_ref_vs_mixture": -0.06224494427442551,
+    "speaker_sim_ref_vs_stage1": -0.028486650437116623,
+    "speaker_sim_ref_vs_extracted": 0.3926239609718323
+  },
+  {
+    "sample_dir": "outputs/listening_samples/2speakers/sample_03",
+    "sample_idx": 3,
+    "seed": 126,
+    "n_interferers": 1,
+    "n_total_speakers": 2,
+    "target_speaker": "8455",
+    "interferer_speakers": [
+      "672"
+    ],
+    "snr_db_list": [
+      5.25
+    ],
+    "mel_mix_mse": 3.6810367107391357,
+    "mel_s1_mse": 3.2205004692077637,
+    "mel_s2_mse": 1.4145560264587402,
+    "mel_s2_vs_s1_pct": 56.076515436536546,
+    "sisdr_mixture_vs_target": -7.184608459472656,
+    "sisdr_stage1_vs_target": -3.256279468536377,
+    "sisdr_extracted_vs_target": -1.945591926574707,
+    "speaker_sim_ref_vs_target_clean": 0.6994699239730835,
+    "speaker_sim_ref_vs_mixture": 0.6939106583595276,
+    "speaker_sim_ref_vs_stage1": 0.6816345453262329,
+    "speaker_sim_ref_vs_extracted": 0.6910670399665833
+  },
+  {
+    "sample_dir": "outputs/listening_samples/3speakers/sample_00",
+    "sample_idx": 0,
+    "seed": 123,
+    "n_interferers": 2,
+    "n_total_speakers": 3,
+    "target_speaker": "2094",
+    "interferer_speakers": [
+      "8230",
+      "61"
+    ],
+    "snr_db_list": [
+      4.41,
+      6.06
+    ],
+    "mel_mix_mse": 10.613357543945312,
+    "mel_s1_mse": 9.334877967834473,
+    "mel_s2_mse": 6.346730709075928,
+    "mel_s2_vs_s1_pct": 32.01056584836901,
+    "sisdr_mixture_vs_target": -9.132640838623047,
+    "sisdr_stage1_vs_target": -7.81337308883667,
+    "sisdr_extracted_vs_target": -7.3152689933776855,
+    "speaker_sim_ref_vs_target_clean": 0.22369694709777832,
+    "speaker_sim_ref_vs_mixture": -0.3059857487678528,
+    "speaker_sim_ref_vs_stage1": -0.2795242965221405,
+    "speaker_sim_ref_vs_extracted": -0.24756383895874023
+  },
+  {
+    "sample_dir": "outputs/listening_samples/3speakers/sample_01",
+    "sample_idx": 1,
+    "seed": 124,
+    "n_interferers": 2,
+    "n_total_speakers": 3,
+    "target_speaker": "1188",
+    "interferer_speakers": [
+      "5105",
+      "2094"
+    ],
+    "snr_db_list": [
+      8.09,
+      1.28
+    ],
+    "mel_mix_mse": 8.929697036743164,
+    "mel_s1_mse": 7.799919605255127,
+    "mel_s2_mse": 2.8262085914611816,
+    "mel_s2_vs_s1_pct": 63.76618305710422,
+    "sisdr_mixture_vs_target": -6.969338417053223,
+    "sisdr_stage1_vs_target": -5.464395999908447,
+    "sisdr_extracted_vs_target": -3.7757346630096436,
+    "speaker_sim_ref_vs_target_clean": 0.5421116948127747,
+    "speaker_sim_ref_vs_mixture": 0.43569883704185486,
+    "speaker_sim_ref_vs_stage1": 0.3921126127243042,
+    "speaker_sim_ref_vs_extracted": 0.4955371022224426
+  },
+  {
+    "sample_dir": "outputs/listening_samples/3speakers/sample_02",
+    "sample_idx": 2,
+    "seed": 125,
+    "n_interferers": 2,
+    "n_total_speakers": 3,
+    "target_speaker": "672",
+    "interferer_speakers": [
+      "4446",
+      "5105"
+    ],
+    "snr_db_list": [
+      6.47,
+      6.53
+    ],
+    "mel_mix_mse": 7.910030364990234,
+    "mel_s1_mse": 7.446836471557617,
+    "mel_s2_mse": 1.4902912378311157,
+    "mel_s2_vs_s1_pct": 79.98759280503714,
+    "sisdr_mixture_vs_target": -18.202077865600586,
+    "sisdr_stage1_vs_target": -13.995954513549805,
+    "sisdr_extracted_vs_target": -15.49040699005127,
+    "speaker_sim_ref_vs_target_clean": 0.49560409784317017,
+    "speaker_sim_ref_vs_mixture": 0.04995187371969223,
+    "speaker_sim_ref_vs_stage1": 0.020988136529922485,
+    "speaker_sim_ref_vs_extracted": 0.20500418543815613
+  },
+  {
+    "sample_dir": "outputs/listening_samples/3speakers/sample_03",
+    "sample_idx": 3,
+    "seed": 126,
+    "n_interferers": 2,
+    "n_total_speakers": 3,
+    "target_speaker": "8455",
+    "interferer_speakers": [
+      "672",
+      "5105"
+    ],
+    "snr_db_list": [
+      3.06,
+      7.1
+    ],
+    "mel_mix_mse": 6.856400012969971,
+    "mel_s1_mse": 6.33768367767334,
+    "mel_s2_mse": 3.1905031204223633,
+    "mel_s2_vs_s1_pct": 49.658214535666986,
+    "sisdr_mixture_vs_target": -8.527395248413086,
+    "sisdr_stage1_vs_target": -6.921446800231934,
+    "sisdr_extracted_vs_target": -5.146378993988037,
+    "speaker_sim_ref_vs_target_clean": 0.6994699239730835,
+    "speaker_sim_ref_vs_mixture": 0.6511262655258179,
+    "speaker_sim_ref_vs_stage1": 0.5954748392105103,
+    "speaker_sim_ref_vs_extracted": 0.6689354181289673
+  },
+  {
+    "sample_dir": "outputs/listening_samples/4speakers/sample_00",
+    "sample_idx": 0,
+    "seed": 123,
+    "n_interferers": 3,
+    "n_total_speakers": 4,
+    "target_speaker": "2094",
+    "interferer_speakers": [
+      "8230",
+      "61",
+      "1320"
+    ],
+    "snr_db_list": [
+      6.06,
+      4.07,
+      1.47
+    ],
+    "mel_mix_mse": 15.946206092834473,
+    "mel_s1_mse": 13.928750991821289,
+    "mel_s2_mse": 4.707128047943115,
+    "mel_s2_vs_s1_pct": 66.20567019464232,
+    "sisdr_mixture_vs_target": -15.691672325134277,
+    "sisdr_stage1_vs_target": -8.276728630065918,
+    "sisdr_extracted_vs_target": -5.606246471405029,
+    "speaker_sim_ref_vs_target_clean": 0.22369694709777832,
+    "speaker_sim_ref_vs_mixture": -0.319677472114563,
+    "speaker_sim_ref_vs_stage1": -0.3144379258155823,
+    "speaker_sim_ref_vs_extracted": -0.17626336216926575
+  },
+  {
+    "sample_dir": "outputs/listening_samples/4speakers/sample_01",
+    "sample_idx": 1,
+    "seed": 124,
+    "n_interferers": 3,
+    "n_total_speakers": 4,
+    "target_speaker": "1188",
+    "interferer_speakers": [
+      "5105",
+      "2094",
+      "8230"
+    ],
+    "snr_db_list": [
+      1.28,
+      2.49,
+      9.71
+    ],
+    "mel_mix_mse": 9.803488731384277,
+    "mel_s1_mse": 8.626745223999023,
+    "mel_s2_mse": 3.7228500843048096,
+    "mel_s2_vs_s1_pct": 56.84525290084965,
+    "sisdr_mixture_vs_target": -11.236387252807617,
+    "sisdr_stage1_vs_target": -8.837250709533691,
+    "sisdr_extracted_vs_target": -5.66123104095459,
+    "speaker_sim_ref_vs_target_clean": 0.5421116948127747,
+    "speaker_sim_ref_vs_mixture": 0.11699206382036209,
+    "speaker_sim_ref_vs_stage1": 0.0837751179933548,
+    "speaker_sim_ref_vs_extracted": 0.4335044026374817
+  },
+  {
+    "sample_dir": "outputs/listening_samples/4speakers/sample_02",
+    "sample_idx": 2,
+    "seed": 125,
+    "n_interferers": 3,
+    "n_total_speakers": 4,
+    "target_speaker": "672",
+    "interferer_speakers": [
+      "4446",
+      "5105",
+      "121"
+    ],
+    "snr_db_list": [
+      6.53,
+      1.04,
+      7.38
+    ],
+    "mel_mix_mse": 10.4595947265625,
+    "mel_s1_mse": 9.833244323730469,
+    "mel_s2_mse": 3.051511526107788,
+    "mel_s2_vs_s1_pct": 68.9673984938663,
+    "sisdr_mixture_vs_target": -19.150754928588867,
+    "sisdr_stage1_vs_target": -18.987171173095703,
+    "sisdr_extracted_vs_target": -23.837310791015625,
+    "speaker_sim_ref_vs_target_clean": 0.49560409784317017,
+    "speaker_sim_ref_vs_mixture": -0.02476588822901249,
+    "speaker_sim_ref_vs_stage1": -0.0405166894197464,
+    "speaker_sim_ref_vs_extracted": 0.04177965223789215
+  },
+  {
+    "sample_dir": "outputs/listening_samples/4speakers/sample_03",
+    "sample_idx": 3,
+    "seed": 126,
+    "n_interferers": 3,
+    "n_total_speakers": 4,
+    "target_speaker": "8455",
+    "interferer_speakers": [
+      "672",
+      "5105",
+      "5683"
+    ],
+    "snr_db_list": [
+      7.1,
+      9.24,
+      5.38
+    ],
+    "mel_mix_mse": 10.125467300415039,
+    "mel_s1_mse": 8.787997245788574,
+    "mel_s2_mse": 2.312002420425415,
+    "mel_s2_vs_s1_pct": 73.69136157236072,
+    "sisdr_mixture_vs_target": -12.362594604492188,
+    "sisdr_stage1_vs_target": -10.929508209228516,
+    "sisdr_extracted_vs_target": -8.83298110961914,
+    "speaker_sim_ref_vs_target_clean": 0.6994699239730835,
+    "speaker_sim_ref_vs_mixture": 0.3617623448371887,
+    "speaker_sim_ref_vs_stage1": 0.31939199566841125,
+    "speaker_sim_ref_vs_extracted": 0.6237492561340332
+  }
+]
