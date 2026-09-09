@@ -159,6 +159,70 @@ def mix_at_snr(
     return mixture, interferer_scaled
 
 
+def mix_multi_at_snr(
+    target: torch.Tensor,
+    interferers: List[torch.Tensor],
+    snr_db_list: List[float],
+) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]]:
+    """
+    Generalizes mix_at_snr() above to more than one simultaneous interferer.
+
+    EVAL-ONLY tool added for the multi-speaker (>2 total speakers) generalization
+    test (see eval/eval_multi_speaker.py) -- NOT used by the training-time
+    MixtureCreator, which stays exactly as trained (single interferer). This lets
+    us ask "how does the trained model behave on mixtures harder than what it was
+    trained on" without touching a single line of the training data pipeline.
+
+    Each interferer is independently scaled to its OWN snr_db_list[i], relative to
+    the ORIGINAL target's RMS (same formula as mix_at_snr, applied per-interferer
+    against the target -- not against the running partial sum -- so each
+    interferer's realized SNR is well-defined on its own and doesn't depend on
+    list order).
+
+    Args:
+        target      : (T,) target speaker waveform
+        interferers : list of (T,) interfering speaker waveforms (len = N)
+        snr_db_list : desired SNR (dB) for each interferer, len N, one per
+                      interferer, target-relative (same convention as mix_at_snr)
+    Returns:
+        mixture            : (T,) target + all interferers, clip-normalized
+        target_matched      : (T,) target actually summed into mixture (length-
+                               trimmed and, if clipping occurred, scaled down to
+                               match -- unlike mix_at_snr, this IS returned, so
+                               callers get a self-consistent supervision target
+                               even on the rare sample that clips)
+        interferers_scaled : list of (T,) each interferer as actually mixed in
+    """
+    assert len(interferers) == len(snr_db_list), "need one snr_db per interferer"
+    assert len(interferers) >= 1, "need at least one interferer"
+
+    min_len     = min(len(target), *(len(i) for i in interferers))
+    target      = target[:min_len]
+    interferers = [i[:min_len] for i in interferers]
+
+    target_rms = target.pow(2).mean().sqrt().clamp(min=1e-8)
+
+    interferers_scaled: List[torch.Tensor] = []
+    mixture = target.clone()
+    for interferer, snr_db in zip(interferers, snr_db_list):
+        interferer_rms         = interferer.pow(2).mean().sqrt().clamp(min=1e-8)
+        desired_interferer_rms = target_rms / (10 ** (snr_db / 20))
+        scale                  = desired_interferer_rms / interferer_rms
+        interferer_scaled      = interferer * scale
+        interferers_scaled.append(interferer_scaled)
+        mixture = mixture + interferer_scaled
+
+    # normalize to prevent clipping -- scale target + every interferer together
+    # so the relative per-interferer SNRs set above are preserved
+    max_val = mixture.abs().max().clamp(min=1e-8)
+    if max_val > 1.0:
+        mixture             = mixture / max_val
+        target              = target / max_val
+        interferers_scaled  = [i / max_val for i in interferers_scaled]
+
+    return mixture, target, interferers_scaled
+
+
 def apply_rir(
     waveform: torch.Tensor,
     rir: torch.Tensor,

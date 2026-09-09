@@ -17,7 +17,7 @@ from omegaconf import DictConfig
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data.mel import MelSpectrogramExtractor, MelNormalizer, segment_waveform
-from data.augment import MixtureCreator, load_audio
+from data.augment import MixtureCreator, load_audio, mix_multi_at_snr
 
 
 class LibriSpeechTSEDataset(Dataset):
@@ -41,6 +41,7 @@ class LibriSpeechTSEDataset(Dataset):
         cfg: DictConfig,
         is_train: bool = True,
         seed: Optional[int] = None,
+        interferer_count_probs: Optional[List[float]] = None,
     ):
         """
         Args:
@@ -49,9 +50,30 @@ class LibriSpeechTSEDataset(Dataset):
             cfg             : full config (omegaconf)
             is_train        : if True, apply augmentation; else clean only
             seed            : optional random seed for reproducibility
+            interferer_count_probs: NEW, opt-in, default None. A probability
+                distribution over how many SIMULTANEOUS interferers a training
+                example gets: interferer_count_probs[i] = P(exactly i+1
+                interferers), so index 0 = the original 2-total-speaker case,
+                index 1 = 3-total-speaker, index 2 = 4-total-speaker, etc.
+                Must sum to 1.0. Left as None (default) for every existing
+                caller (train_flow.py, train_mask.py, eval scripts, ...) --
+                that reproduces the ORIGINAL single-interferer __getitem__
+                path EXACTLY, unchanged. Added for
+                training/finetune_flow_hard_multispeaker.py, which closes the
+                speaker-count-coverage gap characterized in
+                docs/results_and_limitations.md Sec 5.5.3 (Stage 2 loses
+                78.3%->53.7% of its improvement-over-Stage-1 as speaker count
+                rises 2->4; Stage 1 itself is unaffected). When set,
+                n_interferers>=2 examples use the eval-proven
+                mix_multi_at_snr() (additive-only, no clean/reverb branch --
+                see __getitem__) instead of self.mixer.
         """
         self.cfg      = cfg
         self.is_train = is_train
+        if interferer_count_probs is not None:
+            assert abs(sum(interferer_count_probs) - 1.0) < 1e-5, \
+                "interferer_count_probs must sum to 1.0"
+        self.interferer_count_probs = interferer_count_probs
         # If set, every __getitem__ call becomes fully deterministic —
         # same idx always yields the same speaker/utterance/interferer/
         # mixing choice, regardless of DataLoader worker/shuffle state.
@@ -160,22 +182,32 @@ class LibriSpeechTSEDataset(Dataset):
         target_path = utterances[utt_idx[0]]
         ref_path    = utterances[utt_idx[1]]
 
-        # pick a different speaker as interferer
-        interferer_speaker = random.choice(
-            [s for s in self.speakers if s != target_speaker]
-        )
-        interferer_path = random.choice(
-            self.speaker_utterances[interferer_speaker]
-        )
+        # NEW: how many simultaneous interferers this example gets. Default
+        # (interferer_count_probs=None) always draws exactly 1 -- IDENTICAL
+        # to the original behavior below, so every existing caller that
+        # doesn't pass the new kwarg is completely unaffected.
+        if self.interferer_count_probs is not None:
+            n_interferers = random.choices(
+                range(1, len(self.interferer_count_probs) + 1),
+                weights=self.interferer_count_probs,
+            )[0]
+        else:
+            n_interferers = 1
+
+        other_speakers = [s for s in self.speakers if s != target_speaker]
+        interferer_speakers = random.sample(other_speakers, n_interferers)
+        interferer_paths = [
+            random.choice(self.speaker_utterances[s]) for s in interferer_speakers
+        ]
 
         # load audio
         sr          = self.cfg.audio.sample_rate
         seg_len     = self.cfg.audio.segment_length
         segment_samples = int(seg_len * sr)
 
-        target_wav     = load_audio(target_path,     sr)
-        interferer_wav = load_audio(interferer_path, sr)
-        reference_wav  = load_audio(ref_path,        sr)
+        target_wav      = load_audio(target_path, sr)
+        reference_wav   = load_audio(ref_path,    sr)
+        interferer_wavs = [load_audio(p, sr) for p in interferer_paths]
 
         # NEW: track how much of target_wav is real audio vs. will-be-padding,
         # before segment_waveform pads/crops it. Padding is always appended at
@@ -191,14 +223,36 @@ class LibriSpeechTSEDataset(Dataset):
         # for WavLM speaker verification). No reference_length key exists
         # in config, so this falls back to the 3.0s default.
         ref_seg_len     = getattr(self.cfg.audio, "reference_length", 3.0)
-        target_wav      = segment_waveform(target_wav,     sr, seg_len,     random_start=True)
-        interferer_wav  = segment_waveform(interferer_wav, sr, seg_len,     random_start=True)
-        reference_wav   = segment_waveform(reference_wav,  sr, ref_seg_len, random_start=True)
+        target_wav      = segment_waveform(target_wav,    sr, seg_len,     random_start=True)
+        reference_wav   = segment_waveform(reference_wav, sr, ref_seg_len, random_start=True)
+        interferer_wavs = [
+            segment_waveform(w, sr, seg_len, random_start=True) for w in interferer_wavs
+        ]
 
         # create mixture
-        mixture_wav, target_wav, condition, snr_db = self.mixer.create_mixture(
-            target_wav, interferer_wav
-        )
+        if n_interferers == 1:
+            # UNCHANGED path -- exactly the original single-interferer mixer,
+            # including its clean/additive/reverb condition sampling.
+            mixture_wav, target_wav, condition, snr_db = self.mixer.create_mixture(
+                target_wav, interferer_wavs[0]
+            )
+        else:
+            # NEW: 2+ simultaneous interferers. Additive-only -- no clean/
+            # reverb branch here (see interferer_count_probs docstring in
+            # __init__) -- each interferer independently drawn at its own SNR
+            # in the SAME trained [snr_min, snr_max] range, via the
+            # eval-proven mix_multi_at_snr() generalization of mix_at_snr()
+            # (see data/augment.py, and its first use in eval/eval_multi_speaker.py).
+            snr_db_list = [
+                random.uniform(self.cfg.data.snr_min, self.cfg.data.snr_max)
+                for _ in range(n_interferers)
+            ]
+            mixture_wav, target_wav, _ = mix_multi_at_snr(
+                target_wav, interferer_wavs, snr_db_list
+            )
+            condition = f"additive_{n_interferers + 1}spk"
+            snr_db    = snr_db_list[0]   # representative value; full per-interferer
+                                          # list isn't tracked in this dict's schema
 
         # compute mel spectrograms
         mixture_mel   = self.mel(mixture_wav)    # (n_mels, T)
@@ -237,6 +291,13 @@ class LibriSpeechTSEDataset(Dataset):
                                                # mixing condition was applied to this sample
             "snr_db"       : snr_db if snr_db is not None else float("nan"),
                                                # realized additive/reverb SNR; NaN for "clean"
+            "target_speaker": target_speaker, # NEW: speaker ID string. Needed so a
+                                               # verification-accuracy eval (genuine vs.
+                                               # in-batch impostor trials) can exclude
+                                               # same-speaker collisions from the impostor
+                                               # pool -- test-clean only has ~40 speakers,
+                                               # so a batch_size=20 draw has real odds of
+                                               # the same speaker appearing twice.
         }
 
 
@@ -281,6 +342,74 @@ def build_dataloaders(
     val_loader = DataLoader(
         val_dataset,
         batch_size  = cfg.train_masking.batch_size,
+        shuffle     = False,
+        num_workers = num_workers,
+        pin_memory  = True,
+        drop_last   = False,
+        persistent_workers  = True,
+        prefetch_factor     = 4,
+    )
+
+    return train_loader, val_loader
+
+
+def build_dataloaders_multispeaker(
+    cfg: DictConfig,
+    interferer_count_probs: List[float],
+    num_workers: int = 8,
+) -> Tuple[DataLoader, DataLoader]:
+    """
+    Like build_dataloaders() above, but the TRAIN split samples a variable
+    number of simultaneous interferers per example (see
+    LibriSpeechTSEDataset's interferer_count_probs docstring) instead of
+    always exactly 1. Added for training/finetune_flow_hard_multispeaker.py.
+
+    VALIDATION deliberately stays on the ORIGINAL fixed 2-speaker
+    distribution (interferer_count_probs omitted for val_dataset) -- matches
+    the discipline already established in finetune_flow_hard_t0.py: the
+    val_loss proxy needs to stay comparable to every other training run's
+    val curve, not shift under a different task mix. Track the REAL target
+    metric (eval/eval_multi_speaker.py's accuracy table across 2/3/4
+    speakers) periodically instead of trusting this proxy -- same guidance
+    as the hard-t0 script gives for its own val_loss.
+
+    Args:
+        cfg                    : full omegaconf config
+        interferer_count_probs : passed through to the TRAIN dataset only
+        num_workers            : number of dataloader workers
+    Returns:
+        train_loader, val_loader
+    """
+    train_dataset = LibriSpeechTSEDataset(
+        librispeech_root = cfg.data.librispeech_path,
+        splits           = ["train-clean-100"],
+        cfg              = cfg,
+        is_train         = True,
+        interferer_count_probs = interferer_count_probs,
+    )
+
+    val_dataset = LibriSpeechTSEDataset(
+        librispeech_root = cfg.data.librispeech_path,
+        splits           = ["test-clean"],
+        cfg              = cfg,
+        is_train         = False,
+        # interferer_count_probs intentionally omitted -- stays 2-speaker-only
+    )
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size  = cfg.train_flow.batch_size,
+        shuffle     = True,
+        num_workers = num_workers,
+        pin_memory  = True,
+        drop_last   = True,
+        persistent_workers  = True,
+        prefetch_factor     = 4,
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size  = cfg.train_flow.batch_size,
         shuffle     = False,
         num_workers = num_workers,
         pin_memory  = True,
