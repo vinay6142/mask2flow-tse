@@ -1,29 +1,39 @@
 """
-Mask2Flow-TSE — Full test-clean evaluation (mel-domain + optional audio-domain),
+Mask2Flow-TSE -- Full test-clean evaluation (mel-domain + optional audio-domain),
 resumable, incremental-checkpointed.
 
 Everything reported so far (75.8%/71.9% mel-MSE, +0.95 dB SI-SDR) came from a
-SINGLE batch of 60 samples — too thin to be a citable thesis headline number.
+SINGLE batch of 60 samples -- too thin to be a citable thesis headline number.
 This script iterates the WHOLE LibriSpeechTSEDataset(seed=...) deterministically
 (same seed => same target/interferer/SNR draw per index every run, matching the
-convention already used by eval/results_stage2.py's get_real_batch), computes
+convention already used by eval/results_stage2.py get_real_batch), computes
 per-sample mel-domain metrics for every sample, and OPTIONALLY the more
 expensive audio-domain metrics (vocoding + SI-SDR) too.
 
+NEW: when audio-domain metrics are on, also computes a bounded speaker-
+VERIFICATION accuracy per sample -- genuine similarity (extracted output vs.
+its own reference speaker) compared against the hardest in-batch IMPOSTOR
+similarity (extracted output vs. a different speaker reference drawn from
+the same batch, guarded by target_speaker so same-speaker collisions never
+get used as a false impostor). "Accuracy" = % of samples where genuine >
+impostor -- a real same/different speaker-verification correctness rate,
+naturally bounded 0-100%, unlike the unbounded mel-MSE-improvement percentage.
+
 Design for a long CPU run:
   - Per-sample records are appended to a JSONL file as each batch completes
-    (--output), not held in memory until the end — a killed/timed-out SLURM
+    (--output), not held in memory until the end -- a killed/timed-out SLURM
     job still leaves usable partial results.
   - --resume skips any batch whose samples are already fully present in the
     output file, so a second sbatch submission continues rather than restarts.
   - --skip_audio_domain runs the cheap mel-only pass (no vocoding) across the
-    FULL dataset quickly; audio-domain (vocoding + SI-SDR) is the expensive
-    part on CPU, so run it separately on a --max_samples subsample if a full
-    2620-sample audio-domain pass isn't practical time-wise. Recommended
-    strategy: full mel-domain pass (fast, all ~2620 samples) + audio-domain
-    pass on a few hundred samples (still far more robust than n=60).
+    FULL dataset quickly; audio-domain (vocoding + SI-SDR + verification
+    accuracy) is the expensive part on CPU, so run it separately on a
+    --max_samples subsample if a full 2620-sample audio-domain pass is not
+    practical time-wise. Recommended strategy: full mel-domain pass (fast,
+    all ~2620 samples) + audio-domain pass on a few hundred samples (still
+    far more robust than n=60).
   - --summarize_only reads an existing --output file and just prints stats,
-    without touching the GPU/CPU model at all — use this to check progress
+    without touching the GPU/CPU model at all -- use this to check progress
     on a still-running or already-finished job, or to re-print stats after
     tweaking the catastrophic-threshold flags.
 
@@ -35,7 +45,7 @@ Run (mel-domain only, full dataset, fast):
       --seed 42 --n_steps 4 --skip_audio_domain \
       --output outputs/results/full_eval_mel.jsonl
 
-Run (mel + audio-domain, subsample, slower):
+Run (mel + audio-domain + verification accuracy, subsample, slower):
   python3 eval/full_eval.py \
       --mask_ckpt checkpoints_v2/masking/mask_best.pt \
       --flow_ckpt checkpoints_v2/flow/flow_best.pt \
@@ -46,7 +56,7 @@ Run (mel + audio-domain, subsample, slower):
 Resume an interrupted run:
   ... same command, add --resume
 
-Just print stats on what's done so far / already finished:
+Just print stats on what is done so far / already finished:
   python3 eval/full_eval.py --output outputs/results/full_eval_mel.jsonl --summarize_only
 """
 import os
@@ -57,6 +67,7 @@ import argparse
 import statistics as stats
 
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 from omegaconf import OmegaConf
 
@@ -114,7 +125,8 @@ def load_done_indices(output_path):
 
 @torch.no_grad()
 def process_batch(batch, global_idx0, mask_model, flow_model, encoder, vocoder,
-                   cfg_scale, n_steps, cfg_warmup_steps, device, compute_audio):
+                   cfg_scale, n_steps, cfg_warmup_steps, device, compute_audio,
+                   speaker=None):
     mixture      = batch["mixture_mel"].to(device)
     target       = batch["target_mel"].to(device)
     ref_wav      = batch["reference_wav"].to(device)
@@ -169,6 +181,40 @@ def process_batch(batch, global_idx0, mask_model, flow_model, encoder, vocoder,
                 "sisdr_gain_vs_s1": s2_sisdr - s1_sisdr,
             })
 
+            # Speaker-verification accuracy: does the audio still sound like
+            # the correct speaker, tested against a genuine same/different-
+            # speaker discrimination rather than a raw similarity score.
+            # Computed for three sources so the accuracy is calibrated, not
+            # just a bare number: "mix" = doing nothing (lower bound), "s2"
+            # = actual Stage 2 extraction (what we are scoring), "tgt" =
+            # vocoded ground-truth target (the CEILING achievable given the
+            # current vocoder+encoder pipeline -- if this is also well below
+            # target, the bottleneck is not extraction quality, it is the
+            # vocoder/encoder, and retraining Stage 2 alone will not close
+            # the gap). Impostor pool = other samples in this same batch
+            # whose target_speaker differs (guards against the ~40-speaker
+            # test-clean pool producing a same-speaker false impostor by
+            # chance within one batch).
+            if speaker is not None:
+                impostor_idx = [j for j in range(B) if speaker[j] != speaker[b]]
+                if impostor_idx:
+                    for tag, wav in (("mix", mix_wav), ("s2", s2_wav), ("tgt", tgt_wav)):
+                        emb = encoder(wav.unsqueeze(0))[0]   # (512,)
+                        genuine_sim = F.cosine_similarity(emb, d_vec[b], dim=0).item()
+                        impostor_sims = [
+                            F.cosine_similarity(emb, d_vec[j], dim=0).item()
+                            for j in impostor_idx
+                        ]
+                        hardest_sim = max(impostor_sims)
+                        mean_sim = sum(impostor_sims) / len(impostor_sims)
+                        rec.update({
+                            f"verify_{tag}_genuine_sim": genuine_sim,
+                            f"verify_{tag}_impostor_hardest": hardest_sim,
+                            f"verify_{tag}_impostor_mean": mean_sim,
+                            f"verify_{tag}_correct_hardest": bool(genuine_sim > hardest_sim),
+                            f"verify_{tag}_correct_mean": bool(genuine_sim > mean_sim),
+                        })
+
         records.append(rec)
 
     return records
@@ -183,7 +229,7 @@ def print_summary(records, catastrophic_pct=CATASTROPHIC_MEL_PCT):
     has_audio = "sisdr_s2" in records[0]
 
     print("\n" + "=" * 100)
-    print(f"  MASK2FLOW-TSE — FULL-SET EVALUATION SUMMARY  (n = {n} samples)")
+    print(f"  MASK2FLOW-TSE -- FULL-SET EVALUATION SUMMARY  (n = {n} samples)")
     print("=" * 100)
 
     mel_s2_vs_mix = [r["mel_s2_vs_mix_pct"] for r in records]
@@ -217,6 +263,24 @@ def print_summary(records, catastrophic_pct=CATASTROPHIC_MEL_PCT):
         print(f"    Median waveform-MSE improvement vs Stage 1 : {stats.median(wav_s2_vs_s1):.1f}%")
         print(f"    Samples where Stage 2 reduced SI-SDR vs Stage 1: "
               f"{n_sisdr_worse}/{n_audio} ({100*n_sisdr_worse/n_audio:.1f}%)")
+
+    verified = [r for r in records if "verify_s2_correct_hardest" in r]
+    if verified:
+        print(f"\n  [Speaker-verification accuracy]  (n={len(verified)})")
+        print(f"    {'':<52}  {'vs. hardest impostor':<26}  {'vs. mean impostor':<26}")
+        for tag, label in (("mix", "Mixture (do-nothing baseline)"),
+                            ("s2",  "Stage 2 extraction (this system)"),
+                            ("tgt", "Ground-truth target (ceiling; vocoder+encoder limited)")):
+            gen_sims = [r[f"verify_{tag}_genuine_sim"] for r in verified]
+            n_hard = sum(1 for r in verified if r[f"verify_{tag}_correct_hardest"])
+            n_mean = sum(1 for r in verified if r[f"verify_{tag}_correct_mean"])
+            hard_sims = [r[f"verify_{tag}_impostor_hardest"] for r in verified]
+            mean_sims = [r[f"verify_{tag}_impostor_mean"] for r in verified]
+            margin_hard = stats.mean(g - i for g, i in zip(gen_sims, hard_sims))
+            margin_mean = stats.mean(g - i for g, i in zip(gen_sims, mean_sims))
+            print(f"    {label:<52}: "
+                  f"{100*n_hard/len(verified):5.1f}% (margin={margin_hard:+.4f})   "
+                  f"{100*n_mean/len(verified):5.1f}% (margin={margin_mean:+.4f})")
 
     print(f"\n  [Breakdown by SNR bucket]  (mel-domain S2-vs-S1)")
     for lo, hi in SNR_BUCKETS:
@@ -256,8 +320,9 @@ if __name__ == "__main__":
     parser.add_argument("--n_steps", type=int, default=None)
     parser.add_argument("--cfg_warmup_steps", type=int, default=0)
     parser.add_argument("--skip_audio_domain", action="store_true",
-                         help="Skip vocoding + SI-SDR (the expensive part on CPU). "
-                              "Recommended for a full ~2620-sample pass.")
+                         help="Skip vocoding + SI-SDR + verification accuracy (the "
+                              "expensive part on CPU). Recommended for a full "
+                              "~2620-sample pass.")
     parser.add_argument("--output", default="outputs/results/full_eval.jsonl")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--summarize_only", action="store_true",
@@ -312,7 +377,7 @@ if __name__ == "__main__":
         done_indices = load_done_indices(args.output)
         print(f"[FullEval] Resuming: {len(done_indices)} samples already recorded in {args.output}")
     elif os.path.exists(args.output):
-        print(f"[FullEval] {args.output} already exists and --resume not set — "
+        print(f"[FullEval] {args.output} already exists and --resume not set -- "
               f"appending anyway (pass --resume to skip already-done samples, "
               f"or delete the file first for a clean run).")
 
@@ -336,6 +401,7 @@ if __name__ == "__main__":
                 batch, global_idx0, mask_model, flow_model, encoder, vocoder,
                 cfg_scale, n_steps, args.cfg_warmup_steps, device,
                 compute_audio=not args.skip_audio_domain,
+                speaker=batch["target_speaker"],
             )
 
             for rec in records:
