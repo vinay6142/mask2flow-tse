@@ -106,7 +106,13 @@ data:
 # Inference
 inference:
   flow_steps: 4               # single Euler step (paper's key result)
-  cfg_scale: 1.5              # classifier-free guidance scale
+  cfg_scale: 2.5              # classifier-free guidance scale. Re-tuned from 1.5 on 2026-09-13:
+                              # 1.5 was inherited from a pipeline whose Stage 1 AND Stage 2 have
+                              # both since been replaced. Validated on the full battery (job 11112):
+                              # corpus-wide accuracy 85.2 -> 86.2%, 2/3/4spk 84.3/78.3/74.9 ->
+                              # 85.7/80.0/77.0, low-SNR 78.7 -> 80.3%, for -0.09dB SI-SDR and
+                              # +0.5pp catastrophic. Accuracy plateaus here; 3.0 gains no accuracy
+                              # and raises outliers. See docs timeline entries 27-29.
   device: "cuda"
 
 # Paths
