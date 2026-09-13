@@ -16,9 +16,14 @@
 # documented LOWER BOUND, not wrong -- this closes that gap for the
 # tightest-possible final numbers.
 #
-# Deliberately does NOT touch eval_multi_speaker.py -- it already had the
-# fix applied before its last run (job 10890), so rerunning it here would
-# just burn GPU time reproducing the same numbers. See
+# Deliberately does NOT touch eval_multi_speaker.py. CORRECTION (2026-09-11):
+# the reason originally given here -- that its last run (job 10890) already
+# had the trim fix -- was WRONG. Job 10890's 2/3/4-speaker results were
+# written 2026-09-04 10:17-10:24, BEFORE the fix reached
+# eval_multi_speaker.py (made while building the listening-samples exporter,
+# job 10902, 13:56 the same day). Skipping it here left those multi-speaker
+# baselines pre-fix, which later confounded the low-SNR fine-tune comparisons
+# -- see docs/methodology_and_project_history.md timeline entry 18. See
 # scripts/run_refresh_checkpoint_evals_gpu.sh for the full 5-step refresh
 # this was split out of.
 #

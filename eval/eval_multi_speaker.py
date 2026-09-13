@@ -67,6 +67,87 @@ os.makedirs("outputs/results", exist_ok=True)
 
 CATASTROPHIC_MEL_PCT = -30.0   # same threshold used everywhere else in eval/
 
+STAGE1_MODES = ("network", "oracle_logmask", "oracle_energy")
+
+
+def oracle_stage1(mixture_mel, target_mel, mode):
+    """
+    DIAGNOSTIC ONLY -- builds a replacement Stage-1 output from the clean target,
+    so it can never be used at inference. Tests whether Stage 1 is what caps the
+    system at low SNR (docs/methodology_and_project_history.md, entries 18-19).
+
+    Why two oracles: Stage 1 multiplies LOG-mel values by its mask
+    (models/masking.py: x_enhanced = x_mel * mask, mask in [0, 1]), exactly as
+    the paper's Eq. 9 specifies. This project's log-mel is log(mel + 1e-8)
+    (data/mel.py), so every bin quieter than linear power 1 is NEGATIVE, and
+    X * M always lands between X and 0: a loud bin can only be pulled down to 0,
+    and a quiet (negative) bin can only stay put or get LOUDER. That separates
+    two questions with opposite remedies:
+
+      oracle_logmask -- the best mask that exists WITHIN that formulation: per
+          bin, the M in [0, 1] minimising (X*M - Y)^2, i.e. the Stage 1 loss
+          (Eq. 11), which is clip(Y / X, 0, 1). If this barely beats the trained
+          network, the network is already near what its formulation allows and
+          retraining Stage 1 cannot close the gap.
+
+      oracle_energy -- genuine energy deletion: an ideal ratio mask on LINEAR
+          power, clip(Y_lin / X_lin, 0, 1), then back to log. That gives
+          min(Y_lin, X_lin) per bin, and since log is monotone, min(Y, X) in
+          log space. It is close to the clean target, so read it as an upper
+          bound on what changing the formulation could buy, not as a system.
+
+    Args:
+        mixture_mel, target_mel: (80, T) log-mel, same T
+        mode: "oracle_logmask" or "oracle_energy"
+    Returns:
+        (1, 80, T) tensor in the shape Stage 2 expects
+    """
+    X, Y = mixture_mel, target_mel
+    if mode == "oracle_logmask":
+        # Where X is ~0 the product is ~0 for any M, so M's value there doesn't
+        # matter; using M = 1 just avoids dividing by ~0.
+        nonzero = X.abs() > 1e-6
+        ratio = Y / torch.where(nonzero, X, torch.ones_like(X))
+        M = torch.where(nonzero, ratio, torch.ones_like(X)).clamp(0.0, 1.0)
+        out = X * M
+    elif mode == "oracle_energy":
+        out = torch.minimum(X, Y)
+    else:
+        raise ValueError(f"unknown stage1 oracle mode: {mode}")
+    return out.unsqueeze(0)
+
+
+def formulation_stats(mixture_mel, target_mel, network_s1, frame_mask):
+    """
+    Per-sample measurements of how far the log-domain mask formulation limits
+    Stage 1, over real (non-padded) frames only. The first two depend only on
+    the audio; the last two describe what the TRAINED network actually does,
+    testing the paper's D=100% / I=0% claim directly on this implementation.
+
+    Args:
+        mixture_mel, target_mel: (80, T) log-mel
+        network_s1: (1, 80, T) the trained Stage 1 output
+        frame_mask: (1, T) from make_frame_mask, 1 = real frame
+    """
+    valid = frame_mask[0].bool()
+    if not valid.any():
+        valid = torch.ones_like(valid)
+    X = mixture_mel[:, valid]
+    Y = target_mel[:, valid]
+    S = network_s1[0][:, valid]
+
+    zero = torch.zeros_like(X)
+    reachable = (Y >= torch.minimum(X, zero)) & (Y <= torch.maximum(X, zero))
+    delta = S - X
+    deleted = (-delta[delta < 0]).sum().item()
+    inserted = delta[delta > 0].sum().item()
+    return {
+        "frac_mix_bins_negative": (X < 0).float().mean().item(),
+        "frac_target_unreachable_by_any_mask": (~reachable).float().mean().item(),
+        "network_frac_bins_raised": (delta > 1e-6).float().mean().item(),
+        "network_insert_pct": 100.0 * inserted / (deleted + inserted + 1e-8),
+    }
+
 
 # -- speaker index (mirrors data/librispeech.py's _build_index) ------------
 
@@ -87,7 +168,8 @@ def build_speaker_index(librispeech_dir, split, min_utterances=2):
 @torch.no_grad()
 def process_one(sample_idx, base_seed, speaker_utterances, speakers, n_interferers,
                  cfg, mel_extractor, mask_model, flow_model, encoder, vocoder,
-                 cfg_scale, n_steps, snr_min, snr_max, device, compute_audio):
+                 cfg_scale, n_steps, snr_min, snr_max, device, compute_audio,
+                 stage1_mode="network"):
     seed = base_seed + sample_idx
     random.seed(seed)
     torch.manual_seed(seed)
@@ -139,7 +221,14 @@ def process_one(sample_idx, base_seed, speaker_utterances, speakers, n_interfere
     frame_mask = make_frame_mask(torch.tensor([target_valid_frames]), target_mel.shape[-1], device=device)
 
     d_vec = encoder(ref_wav.unsqueeze(0).to(device))
-    stage1_out, _ = mask_model(mixture_mel.unsqueeze(0), d_vec)
+    network_s1, _ = mask_model(mixture_mel.unsqueeze(0), d_vec)
+    # stage1_out is what is FED to Stage 2: the trained network's output by
+    # default, or a diagnostic oracle (see oracle_stage1) under --stage1_mode.
+    # network_s1 is kept either way so every record can report both.
+    if stage1_mode == "network":
+        stage1_out = network_s1
+    else:
+        stage1_out = oracle_stage1(mixture_mel, target_mel, stage1_mode)
     stage2_out = flow_model.inference(stage1_out, d_vec, cfg_scale=cfg_scale, n_steps=n_steps)
 
     mix_b = mixture_mel.unsqueeze(0)
@@ -161,6 +250,13 @@ def process_one(sample_idx, base_seed, speaker_utterances, speakers, n_interfere
         "mel_s2_vs_mix_pct": (mix_mse - s2_mse) / max(mix_mse, 1e-12) * 100,
         "mel_s2_vs_s1_pct": (s1_mse - s2_mse) / max(s1_mse, 1e-12) * 100,
     }
+    # Recorded in EVERY mode so any two runs compare directly: which Stage-1
+    # output Stage 2 received, the trained network's own error for reference
+    # (identical to mel_s1_mse in network mode), and how far the mask
+    # formulation limits Stage 1 on this sample.
+    rec["stage1_mode"] = stage1_mode
+    rec["mel_s1_network_mse"] = masked_mse(network_s1, tgt_b, frame_mask).item()
+    rec.update(formulation_stats(mixture_mel, target_mel, network_s1, frame_mask))
 
     if compute_audio:
         vf = max(target_valid_frames, 1)
@@ -276,6 +372,24 @@ def print_summary(records, catastrophic_pct=CATASTROPHIC_MEL_PCT):
     print(f"    Catastrophic samples (S2 vs S1 < {catastrophic_pct:.0f}%): "
           f"{n_catastrophic}/{n} ({100 * n_catastrophic / n:.1f}%)")
 
+    diag = [r for r in records if "frac_mix_bins_negative" in r]
+    if diag:
+        def med(key):
+            return stats.median([r[key] for r in diag])
+
+        modes = sorted({r["stage1_mode"] for r in diag})
+        print(f"\n  [Stage 1 formulation]  (n={len(diag)}, stage1_mode: {', '.join(modes)})")
+        print(f"    Median mel MSE of the Stage-1 output fed to Stage 2   : {med('mel_s1_mse'):.3f}")
+        print(f"    Median mel MSE of the trained network's own Stage 1   : {med('mel_s1_network_mse'):.3f}")
+        print(f"    Mixture log-mel bins that are negative (median)       : "
+              f"{100 * med('frac_mix_bins_negative'):.1f}%")
+        print(f"    Target bins NO [0,1] mask can reach (median)          : "
+              f"{100 * med('frac_target_unreachable_by_any_mask'):.1f}%")
+        print(f"    Bins the network made LOUDER than the mixture (median): "
+              f"{100 * med('network_frac_bins_raised'):.1f}%")
+        print(f"    Network insert proportion, paper claims 0% (median)   : "
+              f"{med('network_insert_pct'):.1f}%")
+
     if has_audio:
         n_audio = sum(1 for r in records if "sisdr_s2" in r)
         gain_s1 = [r["sisdr_gain_vs_s1"] for r in records if "sisdr_gain_vs_s1" in r]
@@ -345,6 +459,11 @@ if __name__ == "__main__":
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--summarize_only", action="store_true")
     parser.add_argument("--catastrophic_pct", type=float, default=CATASTROPHIC_MEL_PCT)
+    parser.add_argument("--stage1_mode", default="network", choices=STAGE1_MODES,
+                         help="What Stage 2 receives. 'network' (default): the trained Stage 1, "
+                              "unchanged behavior. 'oracle_logmask' / 'oracle_energy': "
+                              "DIAGNOSTIC oracles built from the clean target -- see "
+                              "oracle_stage1() for what each one tests.")
     args = parser.parse_args()
 
     if args.summarize_only:
@@ -371,7 +490,12 @@ if __name__ == "__main__":
 
     print(f"[EvalMultiSpeaker] Device: {device}  n_interferers={args.n_interferers} "
           f"({args.n_interferers + 1} total speakers)  cfg_scale={cfg_scale}  n_steps={n_steps}  "
-          f"snr_range=[{snr_min}, {snr_max}]  audio_domain={'off' if args.skip_audio_domain else 'on'}")
+          f"snr_range=[{snr_min}, {snr_max}]  audio_domain={'off' if args.skip_audio_domain else 'on'}  "
+          f"stage1_mode={args.stage1_mode}")
+    if args.stage1_mode != "network":
+        print("[EvalMultiSpeaker] NOTE: Stage 1 is replaced by a diagnostic ORACLE built from the "
+              "clean target -- these results are not achievable at inference and must not be "
+              "reported as system performance.")
 
     mel_extractor = MelSpectrogramExtractor(
         sample_rate=cfg.audio.sample_rate, n_mels=cfg.mel.n_mels, n_fft=cfg.mel.n_fft,
@@ -417,6 +541,7 @@ if __name__ == "__main__":
                 cfg, mel_extractor, mask_model, flow_model, encoder, vocoder,
                 cfg_scale, n_steps, snr_min, snr_max, device,
                 compute_audio=not args.skip_audio_domain,
+                stage1_mode=args.stage1_mode,
             )
             f_out.write(json.dumps(rec) + "\n")
             f_out.flush()
