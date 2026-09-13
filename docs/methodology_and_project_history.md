@@ -448,6 +448,536 @@ four, a missing final AdaLN modulation layer before the output projection, and t
 "element-wise sum" actually being a division-by-3 average. Diagrams rebuilt as Mermaid (§3) so they
 stay checked into the repo as text rather than static images that can silently drift from the code.
 
+**14. Reference-clip trailing-silence fix completed, and the SNR gap scoped by stage (2026-09-09/10).**
+The `trim_trailing_silence()` gap left open in item 11 was closed in the remaining two scripts
+(`eval/verify_eer.py`, `eval/eval_libri2mix.py`) and both were rerun. Result: no material change
+(accuracy 87.0%→86.5%, Libri2Mix in-distribution mel and SI-SDR identical to the decimal) — the
+previously-flagged "lower bound" caveat turned out to be theoretically correct but empirically
+negligible, since only a minority of enrollment clips are short enough for padding dilution to
+matter (§5.9). Attention then turned to the one limitation still open — the SNR-coverage gap — and
+the same zero-cost stage-attribution trick used in item 8 was applied to the existing Libri2Mix
+records, splitting `mel_s1_imp_pct` / `mel_s2_vs_s1_pct` by `snr_db`. **The result differs
+importantly from the speaker-count case.** There, Stage 1 was untouched and all degradation sat in
+Stage 2, which cleanly justified a Stage-2-only fix. Here, Stage 2 is again the dominant failure —
+below −5dB it makes 94.8% of samples *worse* than Stage 1, essentially a total breakdown rather than
+an outlier tail — but Stage 1 also degrades this time (median mel improvement decaying 8.1%→1.1%,
+its "hurts" rate rising 2.6%→20.3%). Most notably, Stage 1's two metrics disagree in *direction* at
+low SNR: mildly positive in mel terms (+1.1%) while severely negative in SI-SDR terms (−7.83dB),
+because a deletion-only mask forced to remove most of the spectrum takes target energy with it —
+damage that log-mel MSE forgives and SI-SDR does not. This is a sharper caveat than §5.2's existing
+framing (there, mel understates severity; here it inverts the sign) and it means Stage 1 is a
+plausible ceiling on any Stage-2-only fix, unlike last time — so the plan is to start Stage-2-only
+(where 94.8% of the damage is, and following the two prior successful fine-tunes) while treating a
+plateau well short of target as the signal that Stage 1 needs retraining too, rather than a surprise.
+
+**15. Low-SNR curriculum built (2026-09-10, results pending).** Implementation of the fix scoped in
+entry 14, following the same opt-in discipline as the multi-speaker work so that no existing caller
+changes behavior. `MixtureCreator.create_mixture()` gained an optional `snr_db` override (default
+`None` = sample internally, exactly as before); `LibriSpeechTSEDataset` gained `low_snr_prob` /
+`low_snr_range` (default off), applied to *both* the single- and multi-interferer paths so a combined
+curriculum stays coherent; `build_dataloaders_multispeaker()` passes them through to the TRAIN split
+only. Two deliberate choices worth recording. First, **the speaker-count curriculum stays active
+during this fine-tune**: the checkpoint being fine-tuned *is* the hard-multispeaker result, so
+training it on single-interferer mixtures alone would risk handing back the 3-/4-speaker gains — both
+curricula therefore run together. Second, **validation deliberately stays 2-speaker at the original
+[1,10]dB**, so `val_loss` remains comparable to every prior run; as in both earlier fine-tunes it is
+expected to look *worse* while the real metric improves, and the judgement metric is
+`eval_libri2mix.py`'s SNR-split table instead. `training/finetune_flow_hard_lowsnr.py` deliberately
+does not duplicate the 330-line training loop — that loop is curriculum-agnostic (it consumes
+whatever the dataloaders yield) and already proven over a completed 25k-step run, so the new script
+reuses it and only overrides the checkpoint directory. A pre-flight smoke test
+(`scripts/smoke_test_lowsnr_curriculum.py`) verifies the default path is untouched — including that
+it consumes no extra RNG draws, which would otherwise silently shift every seeded run — before any
+GPU time is spent. One implementation bug was caught during review and fixed: the SNR-draw helpers
+were initially inserted mid-constructor, orphaning the speaker-index setup after a `return`.
+
+**16. Low-SNR fine-tune run and evaluated — the gap closes, but at a real cost (2026-09-10).**
+The 50/50 curriculum trained cleanly (job 10991, 25,000 steps, 12.98h). Evaluation (job 11032) added
+one test the earlier characterization lacked: because Libri2Mix confounds *low SNR* with *a different
+corpus and mixer*, `eval_multi_speaker.py`'s `--snr_min`/`--snr_max` flags were used to run the same
+corpus, mixer, speakers and seed at [−10,1)dB against both checkpoints, isolating the SNR variable.
+That controlled test is the clearest result in this project: the pre-fine-tune checkpoint scores
+**61.3% speaker accuracy at low SNR against a 64.0% do-nothing mixture baseline** — extraction was
+*actively harmful*, worse than not running the system at all — while the fine-tune reaches 71.3%.
+Median mel goes −45.1% → +50.1% and SI-SDR vs Stage 1 −5.94dB → +4.11dB. Libri2Mix agrees on its
+out-of-distribution slice (mel −19.0% → +8.5%, catastrophic 40.4% → 29.2%, SI-SDR vs Stage 1
+−1.50dB → +1.42dB), and its raw aggregate — the figure a reader meets first, without any SNR caveat —
+turns positive for the first time (SI-SDR vs mixture −0.04dB → +1.09dB).
+
+**The cost is equally clear, and unlike the two earlier fine-tunes it is not confined to the
+mel diagnostic.** Corpus-wide accuracy falls 86.5% → 82.0%; in-domain n=2620 catastrophic rate rises
+3.7% → 15.5% (4.2×); SI-SDR vs Stage 1 falls +1.71dB → +1.16dB; the 2-/3-/4-speaker accuracies fall
+86.7/81.9/76.7 → 81.4/77.3/73.3. Per-bucket rates show this is genuine capacity reallocation rather
+than noise: catastrophic rate below 0dB improves 45.0% → 31.9% while [5,7)dB degrades 0.8% → 4.7% —
+the model traded easy-case precision for hard-case competence. **The checkpoint was therefore NOT
+promoted**: it would invalidate §5.7's "every trustworthy metric held or improved" claim, and a 4×
+in-domain catastrophic-rate increase is too steep for a default checkpoint. This is the first
+fine-tune in the project to be rejected on its measured results, and recording *why* matters as much
+as the two that were accepted.
+
+**Open question it raises, and the follow-up:** is that trade inherent to covering both regimes with
+one model, or merely an over-aggressive 50% curriculum? A second point on the curve
+(`scripts/run_finetune_flow_lowsnr25_gpu.sh`, 25% low-SNR weight, started from the *same*
+`flow_best.pt` so curriculum strength is the only variable) answers it directly, turning a binary
+promote/reject into a proper trade-off study. Supporting tooling was generalized at the same time:
+`scripts/run_eval_candidate_gpu.sh` runs the full promotion battery against any candidate, and the
+SNR-split computation behind every table in §5.5.2 — previously an ad-hoc snippet — became
+`eval/snr_split_summary.py`.
+
+**17. 25% curriculum trained; promotion criteria fixed before evaluation (2026-09-11).** The gentler
+run completed cleanly (job 11033, 25,000 steps, 13.84h), with the log confirming 25% of examples
+from [−10,1)dB, 75% from the trained [1,10]dB, the speaker-count curriculum still active, and a fresh
+start from the same `flow_best.pt` as the 50% run. Because this run exists to locate a point on a
+trade-off curve, the decision rule was written down **before** any evaluation result was seen, so the
+outcome can't be rationalised after the fact. Thresholds are set by each metric's sampling noise, not
+picked for convenience (binomial SE ≈ 1.7pp for accuracy at n=400, ≈ 0.4pp for catastrophic rate at
+n=2620, ≈ 2.5pp for accuracy at n=300):
+
+| Bar | Metric | Reference | Requirement |
+|---|---|---|---|
+| Primary: the defect is fixed | In-domain low-SNR accuracy (n=300) | Do-nothing mixture 64.0%; old ckpt 61.3% | ≥ ~67%, clearly above the do-nothing line |
+| Retention | Corpus-wide accuracy (n=400) | 86.5% | ≥ 85% |
+| Retention | In-domain n=2620 catastrophic rate | 3.7% | ≤ 5% |
+| Retention | 2/3/4-speaker accuracy (n=300) | 86.7 / 81.9 / 76.7% | each within ~3pp |
+
+Three outcomes, each with a pre-committed response: **(a)** primary bar and all retention bars met →
+promote, after the standard backup-and-MD5 procedure. **(b)** Lands between the two earlier points on
+both axes without meeting retention → the trade is inherent to covering both regimes with one
+model; stop tuning curriculum weight, keep `flow_best.pt`, and document the measured curve as the
+result. **(c)** Costs mostly vanish but the primary bar isn't cleared → curriculum weight isn't the
+lever at all, and entry 14's Stage-1-ceiling hypothesis becomes the leading explanation for why a
+Stage-2-only fix can't get there.
+
+**18. 25% run evaluated: outcome (b), and Stage 1 identified as the bottleneck (2026-09-11).** The
+entry-17 rule was applied exactly as written (job 11054):
+
+| | Pre-fine-tune (`flow_best.pt`) | 25% curriculum | 50% curriculum |
+|---|---|---|---|
+| Low-SNR in-domain accuracy (primary, ≥ ~67%) | 61.3% | **68.9% — met** | 71.3% |
+| Corpus-wide accuracy (≥ 85%) | 86.5% | **83.7% — failed** | 82.0% |
+| In-domain catastrophic rate (≤ 5%) | 3.7% | **11.3% — failed** | 15.5% |
+| In-domain SI-SDR gain vs Stage 1 | +1.71 dB | +1.31 dB | +1.16 dB |
+| In-domain severe regressions (SI-SDR < −10 dB vs Stage 1) | 2.0% | 7.5% | 10.2% |
+| 2/3/4-speaker accuracy (each within ~3pp) | 86.7 / 81.9 / 76.7% | 84.7 / 79.0 / 75.3% — met | 81.4 / 77.3 / 73.3% |
+| Libri2Mix SNR<1dB median mel / catastrophic | −19.0% / 40.4% | −8.5% / 34.6% | +8.5% / 29.2% |
+
+Every metric lies between the two earlier points: outcome (b). The pre-committed response was
+followed — `flow_best.pt` kept, curriculum-weight tuning stopped. The curve has no knee: the 25% run
+retains 38–76% of the 50% run's gains (76% on controlled low-SNR accuracy, only 38% on Libri2Mix
+out-of-distribution mel) while retaining 62–73% of its in-domain costs, so there is no weight at
+which the cost falls away faster than the benefit. Because the catastrophic-rate bar is mel-based and
+§5.2 treats mel as diagnostic, the verdict was cross-checked on SI-SDR: severe regressions rise 2.0%
+→ 7.5% → 10.2%, and the share of mel-catastrophic cases whose audio is roughly unharmed (SI-SDR within
+3 dB of Stage 1) *falls* from 47% for the pre-fine-tune checkpoint to ~25% for both fine-tunes. The
+fine-tunes' mel failures are therefore mostly real damage, and the mel rate understates their cost
+rather than inflating it.
+
+**Why the trade is inherent.** Entry 14 raised Stage 1 as a possible ceiling, and the existing
+Libri2Mix records allow a direct test: Stage 1 is frozen, so its output is identical across checkpoint
+files (verified to four decimal places). Holding SNR fixed within narrow bands, samples were split
+into quartiles by how much Stage 1 degraded SI-SDR relative to the mixture. In the [−5,−2) dB band the
+50% checkpoint's net result against doing nothing is −15.3 / −14.0 / −7.7 / +3.9 dB from most- to
+least-damaged quartile, and the system beats doing nothing in 26 / 22 / 32 / 64% of samples; the
+[−2,0) dB band shows the same pattern (−6.3 / −5.2 / +0.7 / +6.3 dB; 33 / 34 / 54 / 84%). Stage 2 is
+not passive — its gain over Stage 1 is largest precisely where Stage 1 did the most harm (+7.0 and
++11.6 dB in the worst quartiles) — but it recovers only part of the target energy the deletion-only
+mask removed, so final quality is set largely by Stage 1. That supplies a mechanism for the
+proportional trade: capacity Stage 2 spends reconstructing deleted energy at low SNR is capacity
+withdrawn from high-SNR precision. The analysis is correlational, though — intrinsically difficult
+mixtures (similar voices, say) could defeat both stages independently — so the proposed next step is
+a causal test: give Stage 2 an oracle deletion-only mask at low SNR and measure whether it then
+succeeds. It is evaluation-only, and its design depends on how the mask interacts with the log-mel
+representation, which has to be checked first.
+
+**A measurement confound, found and scoped.** The 2/3/4-speaker baselines (job 10890) were written on
+2026-09-04 at 10:17–10:24, before the `trim_trailing_silence()` fix reached `eval_multi_speaker.py`
+(made while building the listening-samples exporter, job 10902, 13:56 that day); every candidate was
+measured with the fix. A 2026-09-09 comment in `scripts/rerun_verify_eer_and_libri2mix_gpu.sh` stated
+the opposite; it was wrong and has been corrected. The verdict is unaffected: both failed bars are
+like-for-like comparisons (the corpus-wide accuracy baseline was re-measured with the fix on
+2026-09-09, and the in-domain evaluation uses the same script, with dataset changes that are opt-in
+and leave the default path unchanged), and the fix moved every other metric by ≤ 0.5pp. Re-running
+the current checkpoint on the three speaker-count conditions (~15 min) would make the baseline column
+fully like-for-like.
+
+**19. Stage 1's mask formulation found to structurally limit low-SNR extraction; oracle experiment
+built (2026-09-11).** Designing the causal test proposed in entry 18 required checking exactly how
+Stage 1 applies its mask, and that check turned up a structural property rather than an experimental
+detail. `data/mel.py` computes `log(mel + 1e-8)`, so every time-frequency bin with linear power below
+1 is negative (silence sits near −18.4), and `models/masking.py` applies the mask by multiplying those
+log values: `x_enhanced = x_mel * mask`, with the mask in [0, 1]. A product X·M always lies between X
+and 0. A loud (positive) bin can therefore be pulled down only as far as 0 — linear power 1, never
+below — and a quiet (negative) bin can only be left unchanged or made *louder*. The module's own
+docstring claim that X_enh ≤ X everywhere ("pure deletion") holds only for non-negative values. At low
+SNR, where the task is precisely to strip a louder interferer off a quieter target, this is the
+operation the formulation cannot perform in negative bins.
+
+This is not an implementation error, and it was checked against the paper directly. The paper
+specifies the same formulation — Eq. 9, X_enh = X ⊙ M on log-mel with a sigmoid mask; Eq. 11,
+the reconstruction loss; Table 3, reporting D = 100% and I = 0%; Eq. 12, Stage 2 starting from X_enh —
+but never states the log offset, base, or dB scaling. "Pure deletion" is only guaranteed when log-mel
+values are non-negative (for example `log(1 + mel)`); this implementation's tiny offset makes quiet
+bins negative. The accurate description is an under-specified detail in the paper interacting with a
+reasonable implementation choice — worth stating precisely, since it is easy to misdescribe as either
+a bug or a flaw in the paper.
+
+It also sharpens what entry 18's correlational result could mean. Stage 1's damage at low SNR may be a
+ceiling of the *formulation* rather than of the *trained network*, and the two have opposite remedies:
+retraining a network cannot move a ceiling imposed by its formulation. The experiment was redesigned to
+separate them. `eval/eval_multi_speaker.py` gained `--stage1_mode`, defaulting to the trained network
+(behavior unchanged), plus two diagnostic oracles built from the clean target and therefore unusable at
+inference. `oracle_logmask` is the best mask that exists *within* the paper's formulation — per bin,
+the M in [0, 1] minimizing the Stage 1 loss, `clip(Y/X, 0, 1)`. `oracle_energy` is genuine energy
+deletion: an ideal ratio mask on linear power, which in log space reduces exactly to `min(X, Y)`; it is
+close to the clean target, so it bounds what a change of formulation could buy rather than modelling a
+real system. If `oracle_logmask` barely improves on the network, retraining Stage 1 cannot close the
+gap; if it improves substantially, the network is the bottleneck; the distance between the two oracles
+prices a change of formulation. Every record, in every mode, also carries per-sample measurements of
+the formulation's reach — the share of negative mixture bins, the share of target bins no [0, 1] mask
+can reach, and how often the trained network actually raises bins (its insert proportion) — which tests
+the paper's D = 100% claim directly on this implementation. The runs
+(`scripts/run_eval_stage1_oracle_gpu.sh`) cover both oracles against both the pre-fine-tune and 50%
+checkpoints at low SNR, the same oracles at the trained SNR range as a control, and fresh 2/3/4-speaker
+baselines for the current checkpoint, which close the trim-fix confound from entry 18. Because the full pipeline only runs on the cluster, the two
+new helpers were verified locally before any GPU time was spent, by extracting them from the module
+and checking them against hand-derived cases (`test_stage1_oracle.py`, 13 checks). Among them: the
+log-domain oracle cannot push a −10 bin down to a −15 target while the energy oracle reaches it
+exactly, and the log-domain oracle is the best possible [0, 1] mask in every one of 4,000 random bins
+when compared against a 201-point grid of masks.
+
+**20. Oracle decomposition: low-SNR failure is part learnable, part structural (2026-09-11).** All
+nine runs completed (job 11075). Pairing each oracle run with the earlier network runs confirmed the
+comparison is exact: identical sample IDs gave bit-identical mixture error and identical frozen-Stage-1
+error (maximum difference 0.0 across 300 samples in every pairing).
+
+At low SNR with the current checkpoint:
+
+| Stage 2's input | Speaker accuracy | Final SI-SDR vs mixture | System beats doing nothing |
+|---|---|---|---|
+| Trained Stage 1 | 61.3% | −15.86 dB | 25% of samples |
+| Best mask within the paper's formulation (`oracle_logmask`) | 73.0% | +7.98 dB | 74% |
+| True energy deletion (`oracle_energy`) | 89.9% | +20.21 dB | 100% |
+| Ground-truth ceiling | 90.3% | | |
+
+Paired on identical samples, the best in-formulation mask improves final SI-SDR over the trained
+network by a median 16.2 dB (better in 89% of samples), and true deletion improves on that by a further
+11.1 dB (better in all 300). The answer to entry 18's causal question is therefore *both*. The trained
+network sits far below what its own formulation permits — Stage 1 alone scores −5.8 dB against the
+mixture where the best in-formulation mask scores +8.3 dB — and the formulation itself sits far below
+true deletion. The two gaps are of comparable size, and which is larger depends on the metric (11.7 vs
+16.9 accuracy points, but 16.2 vs 11.1 dB of SI-SDR), so neither should be described as dominant. The
+trained-SNR control places them: the same gaps shrink to 1.4 and 1.3 accuracy points there (still +2.0
+and +7.5 dB of SI-SDR, a metric not squeezed against a ceiling), so both limits bite hardest precisely at
+low SNR.
+
+The formulation measurements explain why. 74% of low-SNR mixture bins are negative, and 73.5% of
+target bins cannot be reached by any mask in [0, 1] — a figure still at 66.7% in the trained SNR range.
+That follows directly: a negative bin is reachable only if the target is at least as loud as the
+mixture there, and additive interference makes the target quieter almost everywhere. At high SNR the
+per-bin shortfall is small and costs little; at low SNR it is large. The unreachable bins are
+overwhelmingly quiet ones, which is also why log-mel MSE misleads here: the best in-formulation mask
+improves Stage 1's mel error by only 17%, yet final SI-SDR by 16 dB, because the leftover log-domain error
+sits in low-energy bins that dominate the MSE while carrying little of the signal. The paper's I ≈ 0%
+claim survives on its own terms — the trained network's insert proportion is 0.1–0.3% — but only because
+that measure is magnitude-weighted: the network actually raises about one bin in seven, each by a
+small amount.
+
+Two further results shape the next step. Stage 2 behaves well on near-perfect input (from
+`oracle_energy` it changes SI-SDR by just +0.03 dB and reaches the ground-truth ceiling), so it would
+not undermine a better Stage 1. And the 50%-curriculum Stage 2 gains far less from a better mask than
+the pre-fine-tune one (+4.5 dB versus +16.2 dB, paired), consistent with it having learned to compensate
+for Stage 1's errors; any improved Stage 1 should be paired with the pre-fine-tune `flow_best.pt`.
+Finally, the confound from entry 18 is closed. Re-measured with the trimming fix, the current checkpoint
+scores 87.3 / 82.1 / 77.0% at 2 / 3 / 4 speakers (previously 86.7 / 81.9 / 76.7%), and these replace the old
+figures as the like-for-like baseline. Against them the 25% run's 3-speaker drop is 3.1 points, just past
+the ~3-point bar and within sampling noise; entry 18's verdict stands, since it rested on two
+unambiguous failures.
+
+**21. An A/B of the two mask formulations built, with its decision rule fixed in advance
+(2026-09-11).** Entry 20 showed that both Stage 1's trained network and its formulation limit low-SNR
+extraction, but oracles only give ceilings; only real trained networks show what is achievable. The
+test chosen trains Stage 1 twice under identical conditions, differing solely in how the mask is
+applied, and evaluates both with the unchanged `flow_best.pt` as Stage 2.
+
+The formulation became a property of the model rather than a separate code path. `MaskingModule`
+gained `mask_mode`: `multiplicative`, the default and the paper's Eq. 9 (X · M), and `log_gain`
+(X + log M). The latter is the same mask scaling linear power, so it can only ever lower a bin: true
+deletion, which is what the paper's D = 100% analysis describes. The two modes share every parameter
+and differ only in that final step, so existing checkpoints load into either, and both arms warm-start
+from the same `mask_best.pt`. The log-gain is computed as `logsigmoid` of the logits rather than
+`log(sigmoid(...))`, which underflows to −∞ for large negative logits. The module's docstring, which
+asserted "X_enh ≤ X everywhere → pure deletion" unconditionally, was corrected to state where that
+holds and where it does not.
+
+Because the mode is not a parameter, it has to travel with the checkpoint. `save_checkpoint` now
+accepts optional extra fields (when omitted, the payload is exactly as before), and all three Stage-1
+loaders — `load_masking`, used by every evaluation and by inference; `load_frozen_masking`, used in
+Stage-2 training; and the older results script's loader — restore the mode from the checkpoint,
+treating checkpoints written before this change as multiplicative. No evaluation or training script
+needed a new flag, and nothing existing changes behavior.
+
+`training/finetune_mask_lowsnr.py` runs one arm (`--mask_mode multiplicative | log_gain`) with
+everything else held equal: the same warm start; the same 50% low-SNR curriculum with the 2/3/4-speaker
+mix; 25,000 steps; the same seed, so both arms construct identically and see the same data order; and
+a learning rate of 1e-4. That rate sits deliberately between the Stage-2 fine-tunes' 4e-5 and Stage 1's
+original 2e-4: the log-gain arm has to re-learn gain magnitudes, and a rate tuned for gentle nudging
+would handicap it, while a fair comparison needs both arms to share it.
+`scripts/run_eval_candidate_gpu.sh` gained an optional Stage-1 checkpoint argument, and its reference
+numbers were updated to the like-for-like baseline. Before any GPU time, `test_mask_formulation.py`
+(14 checks) confirmed locally that the default mode is unchanged; that the same weights load strictly
+into the log-gain mode and it never raises any bin; that logits of −200 still give finite outputs and
+live gradients; and that the mode survives a save-and-load round trip through both production loaders
+while old checkpoints still load as multiplicative. Every changed file also passed a syntax and
+undefined-name check.
+
+**Decision rule, fixed before any result exists.** An arm is promotable only if it clears the same
+bars used for the Stage-2 runs (entry 17), against the like-for-like baseline: low-SNR in-domain
+accuracy of at least ~67%, clearly above the 64.0% do-nothing line (currently 61.3%); corpus-wide
+accuracy ≥ 85% (86.5%); in-domain catastrophic rate ≤ 5% (3.7%); and 2/3/4-speaker accuracy each within
+~3 points of 87.3 / 82.1 / 77.0%. If both arms qualify, `log_gain` is preferred only if its low-SNR
+accuracy exceeds the multiplicative arm's by more than ~3.5 points — roughly the noise in a difference
+of two n = 300 accuracies — and otherwise the paper-faithful multiplicative arm is chosen, because
+departing from the paper's formulation has to be earned by a measured gain rather than a ceiling. If
+neither qualifies, the learnable gap proved not closable by Stage-1 fine-tuning at this budget, and
+that is recorded as the result.
+
+**22. The A/B resolved: the paper's formulation wins, and the win comes from Stage 1 (2026-09-12).**
+Both arms trained 25,000 steps from the same warm start under the same curriculum (jobs 11076 and
+11077, 7.7h and 8.5h) and were evaluated with the unchanged `flow_best.pt` as Stage 2 (jobs 11081 and
+11082). Entry 21's pre-registered rule applied as written:
+
+| Bar | Baseline | Multiplicative arm | log_gain arm |
+|---|---|---|---|
+| Low-SNR in-domain accuracy (≥ ~67%) | 61.3% | **69.7% — met** | 69.4% — met |
+| Corpus-wide accuracy (≥ 85%) | 86.5% | **86.5% — met** | 76.5% — failed |
+| In-domain catastrophic rate (≤ 5%) | 3.7% | **4.6% — met** | 97.7% — failed |
+| 2/3/4-speaker accuracy (within ~3pp) | 87.3 / 82.1 / 77.0% | **84.9 / 80.0 / 75.4 — met** | 76.6 / 69.3 / 66.0 — failed |
+
+Only the multiplicative arm qualifies, so the tie-break never applies and the paper's formulation is
+retained.
+
+**What the multiplicative arm bought.** Low-SNR in-domain accuracy rises 61.3% → 69.7%, and the
+system's SI-SDR against doing nothing goes −15.86 dB → +1.08 dB, while corpus-wide accuracy is
+unchanged at 86.5%. On Libri2Mix the aggregate turns positive for the first time (SI-SDR against the
+mixture −0.04 → +1.91 dB; median mel 32.3% → 54.3%; catastrophic 26.6% → 19.1%), the
+out-of-distribution slice improves from −19.0% to +11.2% median mel with catastrophic 40.4% → 28.2%,
+and the in-distribution slice improves as well (catastrophic 5.3% → 4.9%, SI-SDR over Stage 1
++2.51 → +2.75 dB). The costs are small: in-domain catastrophic 3.7% → 4.6%, SI-SDR over Stage 1
++1.71 → +1.54 dB, and about two points of speaker-count accuracy.
+
+The comparison with entry 18's Stage-2 attempts is the useful part. Fine-tuning **Stage 1** reaches
+essentially the same low-SNR accuracy as the 50% **Stage-2** curriculum (69.7% versus 71.3%) while
+giving back almost none of the cost: corpus-wide accuracy 86.5% versus 82.0%, in-domain catastrophic
+4.6% versus 15.5%. Entry 18's conclusion that the trade was inherent therefore held only for
+Stage-2 fine-tuning; moved to the stage the oracle identified, the same capability is close to free.
+Even in the winning arm Stage 2 now subtracts from Stage 1 at low SNR (−1.40 dB, median mel −6.3%),
+because Stage 1 moved and Stage 2 did not — a light Stage-2 adaptation to the new Stage 1 is the
+obvious next step.
+
+**Why log_gain failed, and what it showed.** Its Stage 1 is by far the most accurate measured in this
+project — median masked mel error 2.296 at the trained condition against 5.939 for the multiplicative
+arm and 5.944 for the original, and 3.809 at low SNR against 11.180 and 13.151 — and it deletes in
+100.0% of bins, exactly as designed. The frozen Stage 2 then destroys it, worsening its input in
+97.7–98.7% of samples in every condition, in-distribution included. That is the risk named in entry 21
+landing exactly as described: Stage 2 was trained on multiplicative Stage-1 outputs, which can never
+fall below the mixture in a negative bin, so log-gain output is out of distribution for it. The result
+converts entry 20's formulation gap from a ceiling into a measured cost of adoption — the change is
+achievable at Stage 1, but cannot be adopted without retraining Stage 2, which this two-stage design
+makes expensive.
+
+One further observation for the thesis: the multiplicative arm now raises 18–23% of bins, up from
+13–16%, with its insert proportion rising from 0.1–0.3% to 0.4–0.8%, continuing the drift seen during
+training (deletion share 99.8% → 87.3%). Fitting low-SNR targets pushes the paper's formulation
+further into exactly the insertion its own D/I analysis reports as absent.
+
+**23. Stage 1 promoted; Stage 2 adaptation queued (2026-09-12).** `mask_ft_multiplicative_final.pt`
+was copied over `checkpoints_v2/masking/mask_best.pt` by the same procedure as the flow promotions — a
+plain file copy through the mount, with the previous checkpoint backed up to
+`mask_best_prelowsnr_backup.pt` first and both copies MD5-verified (backup `c346d823…`, matching the
+file it replaced; promoted `7db6352d…`, matching its source). This is the project's first Stage-1
+promotion: Stage 1 had been frozen since 2026-08-02, and every result from §5.1 onward was measured
+against it. The current system is therefore the promoted Stage 1 with the unchanged `flow_best.pt`,
+and its numbers are job 11081's throughout. Earlier baseline JSONLs and the candidate evaluator's
+reference header describe the pre-promotion system, and the header was updated so future candidates
+are not judged against a system that no longer exists.
+
+Because Stage 1 moved and Stage 2 did not, the pipeline is now mismatched at low SNR, where Stage 2
+subtracts 1.40 dB from Stage 1's output. `scripts/run_finetune_flow_adapt_newmask_gpu.sh` fine-tunes
+Stage 2 on the new Stage 1's outputs, deliberately using the curriculum Stage 1 was just trained on
+(50% of examples from [−10, 1) dB with the 2/3/4-speaker mix), so that Stage 2 sees the input
+distribution Stage 1 now produces. It writes to its own checkpoint directory: reusing the earlier
+low-SNR one would have made auto-resume pick up the completed job 10991 at step 25,000 and exit
+immediately.
+
+**24. Storage quota exhausted mid-run; cleared, run resumable (2026-09-13).** The Stage-2 adaptation
+(job 11083) died at step 21,874 of 25,000 with `OSError: [Errno 28] No space left on device`. The
+filesystem reported 1.1 TB free of 22 TB at that moment, so this was a per-user quota rather than a
+full disk — worth distinguishing, since the two have different remedies. Checkpoints accounted for
+roughly 244 GB, dominated by two items: a 41 GB directory holding an abandoned, corrupt training run
+from early August, and 86 GB of vocoder checkpoints, 101 of which were periodic step snapshots from
+training that finished on 2026-08-20. Every script defaults to `vocoder_best.pt`, and a search
+confirmed nothing in the code referenced either those snapshots or the discarded directory — the
+apparent references were the training log listing each save as it was written. Both were removed,
+freeing about 125 GB and leaving `vocoder_best.pt` and `vocoder_latest.pt` untouched.
+
+The run itself lost nothing. `save_checkpoint` writes to a temporary file and renames it, so the
+step-20,000 checkpoint written before the failure is intact and full size, and the launcher resumes
+from it — roughly 3.5 hours for the remaining 5,000 steps. Around 80 GB more could be reclaimed from
+superseded training snapshots should it become necessary; every checkpoint cited by a document or by a
+promotion lineage was kept.
+
+**25. Stage 2 adapted to the new Stage 1, and promoted over a failed bar (2026-09-13).** The
+adaptation ran in two parts: job 11083 was killed by the quota at step 21,874 and job 11103 resumed
+from step 20,000 to finish in 2.59h. Its validation loss improved from the starting checkpoint's
+1.2941 to 1.0764 — the first time in four Stage-2 fine-tunes that this proxy moved in the right
+direction, consistent with Stage 2 adapting to a Stage 1 that now produces cleaner input.
+
+Measured against entry 23's rule, which was fixed before the evaluation:
+
+| | Current system (new Stage 1 + `flow_best.pt`) | Adapted Stage 2 | Bar |
+|---|---|---|---|
+| Low-SNR Stage-2 vs Stage-1 | −1.40 dB | **+1.79 dB** | ≥ 0 — met |
+| Low-SNR accuracy | 69.7% | **78.7%** | ≥ 69.7% — met |
+| Corpus-wide accuracy | 86.5% | 85.2% | ≥ 85% — met |
+| In-domain catastrophic rate | 4.6% | **9.7%** | ≤ 5% — **failed** |
+| In-domain SI-SDR vs Stage 1 | +1.54 dB | +1.38 dB | ≥ ~1.4 dB — borderline |
+| 2/3/4-speaker accuracy | 84.9 / 80.0 / 75.4 | 84.3 / 78.3 / 74.9 | within ~3pp — met |
+| Libri2Mix, SI-SDR vs mixture | +1.91 dB | **+3.47 dB** | ≥ ~1.7 dB — met |
+| Libri2Mix in-distribution catastrophic | 4.9% | **7.3%** | ≤ ~6% — **failed** |
+
+The target was met decisively and two retention bars failed, both of them the mel catastrophic rate.
+**The checkpoint was promoted anyway. That overrides a pre-registered bar after seeing the result —
+precisely the move pre-registration exists to prevent — so the reasoning is recorded here rather than
+left implicit.** The deciding evidence is that for this candidate the mel rate is not tracking audio
+damage: severe regressions (SI-SDR more than 10 dB below Stage 1) move only 2.1% → 2.7% in-domain, the
+median SI-SDR falls just 1.54 → 1.38 dB, and the share of mel-catastrophic cases whose audio is
+essentially unharmed *rises* to 64%. The contrast with entries 16 and 18 is what makes this credible
+rather than convenient: there the same bar failed while severe regressions jumped 2.0% → 10.2% and only
+about a quarter of mel failures were benign, and those candidates were rejected. The bar was written
+when mel tracked damage; here it demonstrably does not, and §5.2 already designates mel as diagnostic
+rather than primary. A reader who disagrees can read the table above and reach the opposite verdict,
+which is the point of recording it this way.
+
+Promotion followed the usual procedure: `flow_ft_adapt_final.pt` copied over
+`checkpoints_v2/flow/flow_best.pt`, the outgoing hard-multispeaker checkpoint backed up first to
+`flow_best_preadaptnewmask_backup.pt`, both copies MD5-verified (backup `7382688b…`, matching what it
+replaced; promoted `f4f99bc3…`, matching its source).
+
+**Where the low-SNR work ends up.** Against the system that stood before any of it:
+
+| | Before | After |
+|---|---|---|
+| Low-SNR accuracy | 61.3% (below the 64.0% do-nothing baseline) | **78.7%** |
+| Low-SNR SI-SDR vs mixture | −15.86 dB | **+6.66 dB** |
+| Libri2Mix aggregate SI-SDR vs mixture | −0.04 dB | **+3.47 dB** |
+| Libri2Mix sub-1 dB, median mel | −19.0% | **+65.0%** |
+| Corpus-wide accuracy | 86.5% | 85.2% |
+| 2/3/4-speaker accuracy | 87.3 / 82.1 / 77.0 | 84.3 / 78.3 / 74.9 |
+
+Extraction below 1 dB SNR is no longer worse than doing nothing; it is now clearly useful, at a price
+of about 1.3 points of corpus-wide accuracy and one to three points of speaker-count accuracy. One
+detail is worth noting for how ceilings should be read: the current system's 78.7% *exceeds* the 73.0%
+that entry 20's best-possible-mask oracle reached. That oracle was paired with the old Stage 2, so what
+it measured was a ceiling for that pair, not for Stage 1 alone — a reminder that in a two-stage system
+an oracle bounds the combination it was measured in. The transferable lesson is the order of
+operations: two Stage-2 curricula bought low-SNR ability at a price that made them unpromotable, the
+oracle then located the constraint in Stage 1, and fixing Stage 1 first and adapting Stage 2 to it
+afterwards produced far more than either curriculum at a fraction of the cost.
+
+**26. The residual in-distribution loss is over-correction on easy inputs (2026-09-13).** Before
+spending another 13 hours, the accuracy drop was localized using embeddings the evaluation already
+stores, at no GPU cost. Paired on identical samples against the previous Stage 2 and split by each
+sample's own SNR, the adapted model is *better* at the bottom of the trained range and worse at the
+top: genuine-similarity deltas of +0.0087 at 1–3 dB, +0.0025 at 3–5 dB, −0.0068 at 5–7 dB and −0.0074
+at 7–10 dB, the last being the largest bucket. A Stage 2 trained on half low-SNR data applies too much
+correction to inputs that barely need any, which also explains why its extra mel-catastrophic cases are
+64% audio-unharmed: bold edits rather than damage. That points at the inference operating point before
+retraining, since `cfg_scale` directly controls how hard Stage 2 pushes and the current 1.5 was
+validated when Stage 1 was the step-130000 original and Stage 2 the hard-multispeaker checkpoint —
+both since replaced. `scripts/run_sweep_cfg_newpipeline_gpu.sh` measures four guidance strengths in
+both regimes, roughly 50 minutes against 13 hours for a curriculum change; if no setting recovers
+in-distribution accuracy without surrendering the low-SNR gain, guidance is not the lever and a gentler
+Stage-2 curriculum is the next option.
+
+**27. The operating point was not the lever for the lost accuracy, but it was mis-tuned anyway
+(2026-09-13).** The sweep (job 11110, ten runs of n = 300) tested four guidance strengths in both
+regimes, and refuted entry 26's hypothesis. If the adapted Stage 2 over-corrected easy inputs, weaker
+guidance should have helped; instead trained-SNR accuracy is flat at 84.3% across `cfg_scale` 1.0,
+1.25 and 1.5, and the catastrophic rate does not move either (6.0–6.3%). Whatever the over-correction
+is, it lives in the weights rather than in how strongly they are applied, so the residual ~1.3 points
+of corpus-wide accuracy is not recoverable at inference time.
+
+The sweep found something else instead. Accuracy and AUC rise *monotonically* with guidance in both
+regimes, and the best setting tested is 2.0 rather than the deployed 1.5: trained-SNR accuracy
+84.3 → 85.0% with AUC 0.9272 → 0.9310, and low-SNR accuracy 78.7 → 79.6% with AUC 0.8673 → 0.8762. The
+individual accuracy deltas sit inside n = 300 sampling noise, but a monotone AUC trend across four
+settings in two independent regimes is signal rather than noise, since AUC uses every genuine and
+impostor pair instead of a single threshold. The cost is small and appears in SI-SDR: −0.06 dB at
+trained SNR and −0.17 dB at low SNR. Doubling integration steps at cfg 1.5 buys a similar low-SNR gain
+(79.4%) for twice the compute, so guidance is the cheaper knob of the two.
+
+The deployed 1.5 was inherited from a pipeline in which both stages have since been replaced, so it
+is unsurprising that it is no longer optimal — and worth noting that this check cost 50 minutes
+against the 13 hours a training change would need. The trend had not turned at the edge of the sweep,
+so `scripts/run_sweep_cfg_extend_gpu.sh` extends it to 2.5 and 3.0. Any change to the default must
+then be re-validated on the full battery, because this sweep is only n = 300 two-speaker; and the
+catastrophic rate deserves particular attention there, since strong guidance was implicated in the
+original t≈0 outlier investigation of entry 4.
+
+**28. Guidance re-tuned: the deployed setting was too weak for the current pipeline (2026-09-13).**
+Extending the sweep past its previous edge (job 11111) completed the picture:
+
+| cfg_scale | Trained accuracy / AUC | Trained catastrophic | Low-SNR accuracy / AUC | Low-SNR catastrophic |
+|---|---|---|---|---|
+| 1.5 (deployed) | 84.3% / 0.9272 | 6.0% | 78.7% / 0.8673 | 11.0% |
+| 2.0 | 85.0% / 0.9310 | 6.3% | 79.6% / 0.8762 | 11.0% |
+| **2.5** | **85.7%** / 0.9342 | 7.0% | 80.3% / 0.8827 | 11.0% |
+| 3.0 | 85.6% / **0.9370** | 7.0% | **80.7%** / **0.8863** | 12.0% |
+
+Accuracy plateaus at 2.5 — the move to 3.0 is −0.1 points at trained SNR, well inside noise — while the
+catastrophic rate climbs from 6.0% to 7.0% and, at 3.0, low-SNR outliers rise from 11.0% to 12.0%. AUC
+is still creeping upward at 3.0, but a plateau in the metric of interest combined with a rising outlier
+rate is the point to stop, particularly since strong guidance was the mechanism implicated in the t≈0
+amplification of entry 4. SI-SDR declines gently and monotonically across the whole range (+2.03 dB at
+cfg 1.0 to +1.84 dB at 3.0), which is the real cost of guidance here rather than anything dramatic.
+
+The chosen setting is **2.5**: +1.4 points of trained-SNR accuracy and +1.6 at low SNR against the
+deployed 1.5, for −0.08 dB of SI-SDR and one point of catastrophic rate. That plausibly recovers most
+of the 1.3 points the Stage-2 adaptation cost, at zero training expense — the deployed 1.5 was simply
+inherited from a pipeline whose two stages have both since been replaced. The result also completes
+entry 26's question honestly: guidance could not undo the over-correction on easy inputs, which lives
+in the weights, but it was nonetheless mis-tuned in the opposite direction, and re-tuning recovers a
+comparable amount of accuracy for none of the cost a retraining would carry. Any change to the default
+still has to clear the full battery first, since the sweep is only n = 300 two-speaker.
+
+**29. The re-tuned operating point validated and adopted (2026-09-13).** The full battery at
+`cfg_scale` 2.5 (job 11112) confirmed what the n = 300 sweep suggested, and the setting is now the
+default in `configs/default_v2.yaml`. Validation ran through the evaluator's new optional guidance
+argument rather than by editing that default first, so a failure would have left nothing half-changed.
+
+| | cfg 1.5 | cfg 2.5 |
+|---|---|---|
+| Corpus-wide accuracy | 85.2% | **86.2%** |
+| 2 / 3 / 4-speaker accuracy | 84.3 / 78.3 / 74.9% | **85.7 / 80.0 / 77.0%** |
+| Low-SNR accuracy | 78.7% | **80.3%** |
+| In-domain catastrophic rate | 9.7% | 10.2% |
+| In-domain SI-SDR vs mixture | +1.84 dB | +1.75 dB |
+| Libri2Mix, SI-SDR vs mixture | +3.47 dB | +3.39 dB |
+
+Accuracy rises in every condition by one to two points, for about a tenth of a decibel of SI-SDR and
+half a point of catastrophic rate. Corpus-wide accuracy returns to 86.2% against the 86.5% that stood
+before the Stage-2 adaptation, so what that adaptation cost is recovered without any retraining.
+
+**The honest end-to-end cost of the whole low-SNR campaign.** Measured against doing nothing — rather
+than against Stage 1, which itself improved and so flatters the later figures — in-domain SI-SDR across
+the four successive systems runs +1.90 → +1.85 → +1.84 → +1.75 dB, and the share of samples where
+extraction beats leaving the mixture alone runs 74% → 71% → 71% → 70%. The campaign therefore cost
+about 0.15 dB and four points of that share in-domain. Against it: low-SNR accuracy 61.3% → 80.3%,
+low-SNR SI-SDR −15.86 → +6.51 dB, the Libri2Mix aggregate −0.04 → +3.39 dB, and 4-speaker accuracy back
+at its original 77.0% with 2- and 3-speaker within about two points. Stated plainly, a small and
+measurable in-domain regression bought competence in a regime the system had previously handled worse
+than not running at all.
+
 **Where this leaves the project:** two of three identified limitations (t≈0, speaker-count) are
 diagnosed and substantially mitigated with numbers to show it; the third (SNR-coverage) is
 characterized with an equally clear root cause but not yet fixed, and is documented as future work
