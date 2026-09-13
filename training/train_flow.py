@@ -77,6 +77,10 @@ def load_frozen_masking(
             print(f"[Masking] Loaded EMA params + raw buffers from {ckpt_path}")
         else:
             print(f"[Masking] Loaded raw weights from {ckpt_path}")
+        # The mask formulation isn't a parameter, so it travels in the checkpoint;
+        # older checkpoints are the paper's multiplicative form.
+        model.set_mask_mode(ckpt.get("mask_mode", "multiplicative"))
+        print(f"[Masking] mask_mode={model.mask_mode}")
     else:
         print(f"[Masking] WARNING: No checkpoint found at {ckpt_path}")
         print(f"[Masking] Using random weights (train Stage 1 first!)")

@@ -58,6 +58,8 @@ def load_checkpoint(ckpt_path, cfg, device):
 
     if ckpt_path and Path(ckpt_path).exists():
         ckpt = torch.load(ckpt_path, map_location=device)
+        # formulation travels in the checkpoint; absent = paper's multiplicative
+        model.set_mask_mode(ckpt.get("mask_mode", "multiplicative"))
         # prefer EMA weights
         if "ema" in ckpt:
             ema_shadow = ckpt["ema"]["shadow"]

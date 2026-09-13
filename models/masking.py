@@ -18,10 +18,12 @@ Architecture:
 
 Loss: MSE(X_enh, Y_clean)   — Equation (11) in paper
 
-Key property:
-    mask ∈ [0, 1]  →  X_enh ≤ X everywhere
-    →  pure deletion (D=100%, I=0%)
-    →  flow matching handles insertion in Stage 2
+Key property (corrected 2026-09-11 -- see MaskingModule.set_mask_mode):
+    The paper states mask ∈ [0, 1] → X_enh ≤ X everywhere → pure deletion
+    (D=100%, I=0%). That only holds where X ≥ 0. With this project's
+    log(mel + 1e-8), most bins are negative and X ⊙ M can only RAISE them,
+    so the default multiplicative mode is not pure deletion; the optional
+    mask_mode="log_gain" is. Stage 2 (flow matching) handles insertion either way.
 """
 
 import os
@@ -141,11 +143,13 @@ class MaskingModule(nn.Module):
         conv_channels: list  = [1, 4, 6, 8, 8],
         lstm_hidden:   int   = 416,
         lstm_dropout:  float = 0.1,
+        mask_mode:     str   = "multiplicative",
     ):
         super().__init__()
 
         self.n_mels    = n_mels
         self.embed_dim = embed_dim
+        self.set_mask_mode(mask_mode)
 
         # ── Conv block ────────────────────────────────────────
         self.conv_block  = ConvBlock(conv_channels)
@@ -188,6 +192,34 @@ class MaskingModule(nn.Module):
         print(f"[MaskingModule] Output proj : {n_proj:>10,} params")
         print(f"[MaskingModule] Total       : {n_total:>10,} params  "
               f"(~{n_total/1e6:.1f}M)")
+
+    MASK_MODES = ("multiplicative", "log_gain")
+
+    def set_mask_mode(self, mask_mode: str):
+        """
+        Choose how the predicted mask is applied to the log-mel. The parameters
+        are identical in both modes, so any checkpoint loads into either: only
+        the final application step changes. The mode is stored in the checkpoint
+        (training/train_mask.py save_checkpoint's `extra`) and restored by the
+        loaders; checkpoints written without it are multiplicative.
+
+          multiplicative -- X_enh = X * M, the paper's Eq. 9. With this project's
+              log(mel + 1e-8), bins quieter than linear power 1 are negative, so
+              X * M lands between X and 0: a quiet bin can only stay or get
+              LOUDER, and a loud bin can only drop as far as 0. ~74% of target
+              bins are out of reach at low SNR
+              (docs/methodology_and_project_history.md, entries 19-20).
+
+          log_gain -- X_enh = X + log(M), i.e. the same mask scaling LINEAR power
+              (up to the tiny 1e-8 offset). log(M) <= 0, so every bin can only
+              get quieter whatever its sign: true deletion, which is what the
+              paper's D/I analysis describes. Its per-bin best case is min(X, Y),
+              exactly the oracle_energy ceiling. Computed as logsigmoid(logits),
+              which stays finite where log(sigmoid(logits)) would underflow.
+        """
+        if mask_mode not in self.MASK_MODES:
+            raise ValueError(f"mask_mode must be one of {self.MASK_MODES}, got {mask_mode!r}")
+        self.mask_mode = mask_mode
 
     def forward(
         self,
@@ -237,8 +269,12 @@ class MaskingModule(nn.Module):
         mask     = mask.permute(0, 2, 1)              # (B, 80, T)
 
         # ── Apply mask ────────────────────────────────────────
-        # apply to original (non-normalized) mel
-        x_enhanced = x_mel * mask                    # (B, 80, T)
+        # apply to original (non-normalized) mel; see set_mask_mode()
+        if self.mask_mode == "multiplicative":
+            x_enhanced = x_mel * mask                # (B, 80, T)  paper Eq. 9
+        else:
+            log_gain   = F.logsigmoid(mask_seq).permute(0, 2, 1)   # log(M) <= 0
+            x_enhanced = x_mel + log_gain            # (B, 80, T)  true deletion
 
         return x_enhanced, mask
 

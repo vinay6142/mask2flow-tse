@@ -42,6 +42,8 @@ class LibriSpeechTSEDataset(Dataset):
         is_train: bool = True,
         seed: Optional[int] = None,
         interferer_count_probs: Optional[List[float]] = None,
+        low_snr_prob: float = 0.0,
+        low_snr_range: Optional[Tuple[float, float]] = None,
     ):
         """
         Args:
@@ -67,6 +69,22 @@ class LibriSpeechTSEDataset(Dataset):
                 n_interferers>=2 examples use the eval-proven
                 mix_multi_at_snr() (additive-only, no clean/reverb branch --
                 see __getitem__) instead of self.mixer.
+            low_snr_prob / low_snr_range: NEW, opt-in, both default off
+                (prob 0.0 / range None). When low_snr_range is set, that
+                FRACTION of training examples draw their mixture SNR from
+                low_snr_range instead of the config's [snr_min, snr_max];
+                the rest keep drawing from the configured range exactly as
+                before. Left off for every existing caller, reproducing the
+                ORIGINAL SNR sampling EXACTLY. Added for
+                training/finetune_flow_hard_lowsnr.py, which closes the
+                SNR-coverage gap characterized in
+                docs/results_and_limitations.md Sec 5.5.2: this project's
+                mixer has never once trained below snr_min=1.0, i.e. the model
+                has never been asked to extract the QUIETER of two speakers,
+                and Stage 2 consequently makes 94.8% of sub--5dB samples worse
+                than Stage 1 (see Sec 4, timeline entry 14). Applies to BOTH
+                the single- and multi-interferer paths so a combined
+                speaker-count + SNR curriculum stays coherent.
         """
         self.cfg      = cfg
         self.is_train = is_train
@@ -74,6 +92,12 @@ class LibriSpeechTSEDataset(Dataset):
             assert abs(sum(interferer_count_probs) - 1.0) < 1e-5, \
                 "interferer_count_probs must sum to 1.0"
         self.interferer_count_probs = interferer_count_probs
+        if low_snr_range is not None:
+            assert 0.0 <= low_snr_prob <= 1.0, "low_snr_prob must be in [0, 1]"
+            assert low_snr_range[0] < low_snr_range[1], \
+                "low_snr_range must be (low, high) with low < high"
+        self.low_snr_prob  = low_snr_prob
+        self.low_snr_range = low_snr_range
         # If set, every __getitem__ call becomes fully deterministic —
         # same idx always yields the same speaker/utterance/interferer/
         # mixing choice, regardless of DataLoader worker/shuffle state.
@@ -120,6 +144,28 @@ class LibriSpeechTSEDataset(Dataset):
         print(f"[Dataset] {len(self.speakers)} speakers, "
               f"{sum(len(v) for v in self.speaker_utterances.values())} utterances "
               f"({'train' if is_train else 'val'})")
+
+    def _draw_snr_value(self) -> float:
+        """
+        Draw one mixture SNR in dB, honoring the opt-in low-SNR curriculum.
+        With the curriculum off (low_snr_range=None, the default) this is
+        exactly the original `random.uniform(cfg.data.snr_min, snr_max)`, and
+        consumes exactly one RNG draw, so the default path is unchanged.
+        """
+        if self.low_snr_range is not None and random.random() < self.low_snr_prob:
+            return random.uniform(*self.low_snr_range)
+        return random.uniform(self.cfg.data.snr_min, self.cfg.data.snr_max)
+
+    def _draw_snr_override(self) -> Optional[float]:
+        """
+        SNR override for MixtureCreator.create_mixture(). Returns None when the
+        curriculum is off -- WITHOUT consuming any RNG draw -- so the mixer
+        samples internally exactly as it always has and the global random
+        stream isn't shifted for existing callers.
+        """
+        if self.low_snr_range is None:
+            return None
+        return self._draw_snr_value()
 
     def _build_index(
         self,
@@ -234,7 +280,7 @@ class LibriSpeechTSEDataset(Dataset):
             # UNCHANGED path -- exactly the original single-interferer mixer,
             # including its clean/additive/reverb condition sampling.
             mixture_wav, target_wav, condition, snr_db = self.mixer.create_mixture(
-                target_wav, interferer_wavs[0]
+                target_wav, interferer_wavs[0], snr_db=self._draw_snr_override()
             )
         else:
             # NEW: 2+ simultaneous interferers. Additive-only -- no clean/
@@ -244,8 +290,7 @@ class LibriSpeechTSEDataset(Dataset):
             # eval-proven mix_multi_at_snr() generalization of mix_at_snr()
             # (see data/augment.py, and its first use in eval/eval_multi_speaker.py).
             snr_db_list = [
-                random.uniform(self.cfg.data.snr_min, self.cfg.data.snr_max)
-                for _ in range(n_interferers)
+                self._draw_snr_value() for _ in range(n_interferers)
             ]
             mixture_wav, target_wav, _ = mix_multi_at_snr(
                 target_wav, interferer_wavs, snr_db_list
@@ -357,6 +402,8 @@ def build_dataloaders_multispeaker(
     cfg: DictConfig,
     interferer_count_probs: List[float],
     num_workers: int = 8,
+    low_snr_prob: float = 0.0,
+    low_snr_range: Optional[Tuple[float, float]] = None,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Like build_dataloaders() above, but the TRAIN split samples a variable
@@ -373,10 +420,21 @@ def build_dataloaders_multispeaker(
     speakers) periodically instead of trusting this proxy -- same guidance
     as the hard-t0 script gives for its own val_loss.
 
+    low_snr_prob/low_snr_range (NEW, default off) layer an SNR curriculum on
+    top of the speaker-count one, for training/finetune_flow_hard_lowsnr.py.
+    Both curricula are applied to the TRAIN split together on purpose: the
+    checkpoint this fine-tune starts from is itself the hard-multispeaker
+    result (3-speaker 81.9%, 4-speaker 76.7%), so training it on
+    single-interferer mixtures alone would risk giving those gains straight
+    back. Keeping interferer_count_probs active alongside the SNR curriculum
+    preserves the speaker-count ability while the SNR range widens.
+
     Args:
         cfg                    : full omegaconf config
         interferer_count_probs : passed through to the TRAIN dataset only
         num_workers            : number of dataloader workers
+        low_snr_prob           : fraction of TRAIN examples drawn from low_snr_range
+        low_snr_range          : (low, high) dB; None disables the SNR curriculum
     Returns:
         train_loader, val_loader
     """
@@ -386,6 +444,8 @@ def build_dataloaders_multispeaker(
         cfg              = cfg,
         is_train         = True,
         interferer_count_probs = interferer_count_probs,
+        low_snr_prob     = low_snr_prob,
+        low_snr_range    = low_snr_range,
     )
 
     val_dataset = LibriSpeechTSEDataset(
@@ -393,7 +453,12 @@ def build_dataloaders_multispeaker(
         splits           = ["test-clean"],
         cfg              = cfg,
         is_train         = False,
-        # interferer_count_probs intentionally omitted -- stays 2-speaker-only
+        # interferer_count_probs intentionally omitted -- stays 2-speaker-only.
+        # low_snr_prob/low_snr_range likewise omitted -- val stays in the
+        # original [snr_min, snr_max] range, so the val_loss proxy remains
+        # comparable across every training run in this project rather than
+        # shifting under a harder task mix. Track the REAL target metric
+        # (eval/eval_libri2mix.py's SNR-split table) instead.
     )
 
     train_loader = DataLoader(

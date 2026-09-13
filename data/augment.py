@@ -337,14 +337,25 @@ class MixtureCreator:
         target: torch.Tensor,
         interferer: Optional[torch.Tensor] = None,
         condition: Optional[str] = None,
+        snr_db: Optional[float] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, str, Optional[float]]:
         """
         Create a mixture from target and optional interferer.
-        
+
         Args:
             target    : (T,) clean target speaker waveform
             interferer: (T,) interfering speaker waveform (None for clean)
             condition : force a specific condition, or None to sample randomly
+            snr_db    : NEW, opt-in, default None. Force a specific mixture SNR
+                        instead of sampling one from [snr_min, snr_max]. Left as
+                        None by every pre-existing caller, which reproduces the
+                        original sampling behavior EXACTLY. Added so callers can
+                        implement their own SNR curriculum without mutating this
+                        object's configured range -- see
+                        LibriSpeechTSEDataset's low_snr_prob/low_snr_range and
+                        training/finetune_flow_hard_lowsnr.py, which closes the
+                        SNR-coverage gap characterized in
+                        docs/results_and_limitations.md Sec 5.5.2.
         Returns:
             mixture  : (T,) mixed/augmented waveform
             target   : (T,) clean target (possibly trimmed to match)
@@ -367,8 +378,9 @@ class MixtureCreator:
         if condition == "clean":
             return target.clone(), target.clone(), condition, None
 
-        # sample SNR
-        snr_db = random.uniform(self.snr_min, self.snr_max)
+        # sample SNR (unless the caller forced one -- see snr_db arg above)
+        if snr_db is None:
+            snr_db = random.uniform(self.snr_min, self.snr_max)
 
         if condition == "additive":
             mixture, _ = mix_at_snr(target, interferer, snr_db)

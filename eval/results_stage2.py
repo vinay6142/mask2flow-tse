@@ -87,6 +87,11 @@ def load_masking(ckpt_path, cfg, device):
     else:
         print(f"[Results] Stage 1: loaded raw weights only")
 
+    # The mask formulation isn't a parameter, so it travels in the checkpoint;
+    # checkpoints written before it existed are the paper's multiplicative form.
+    model.set_mask_mode(ckpt.get("mask_mode", "multiplicative"))
+    print(f"[Results] Stage 1: mask_mode={model.mask_mode}")
+
     model.eval()
     for p in model.parameters():
         p.requires_grad = False

@@ -88,6 +88,7 @@ def save_checkpoint(
     tag:       str = "latest",
     stage:     str = "masking",
     prefix:    str = "mask",
+    extra:     dict = None,
 ):
     ckpt_dir = Path(cfg.paths.checkpoint_dir) / stage
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -102,6 +103,10 @@ def save_checkpoint(
         "optimizer" : optimizer.state_dict(),
         "val_loss"  : val_loss,
     }
+    # Non-parameter state a loader needs, e.g. Stage 1's mask_mode
+    # (models/masking.py set_mask_mode). Omitted -> payload exactly as before.
+    if extra:
+        payload.update(extra)
     torch.save(payload, tmp_path)
     os.replace(tmp_path, path)
     print(f"  [Checkpoint] Saved → {path}  (step {step})")
