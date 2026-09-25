@@ -1,0 +1,1500 @@
+<title>Mask2Flow-TSE Phase One</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;1,400&display=swap">
+
+<style>
+:root{
+  --paper:#f5f7f8;
+  --surface:#ffffff;
+  --surface-2:#eef2f4;
+  --ink:#121a20;
+  --ink-2:#3d4c56;
+  --muted:#657782;
+  --rule:#d9e1e5;
+  --rule-strong:#b9c6cd;
+  --accent:#0e6f6b;
+  --accent-soft:#e0efee;
+  --pass:#2c6e49;
+  --pass-soft:#e2efe8;
+  --fail:#9e3535;
+  --fail-soft:#f6e6e6;
+  --warn:#8a5a10;
+  --warn-soft:#f7edda;
+
+  --f-sans:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --f-serif:"IBM Plex Serif",Georgia,"Times New Roman",serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+
+  --measure:68ch;
+  --gap:clamp(18px,3vw,30px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#0d1418;
+    --surface:#131d23;
+    --surface-2:#18242b;
+    --ink:#e6eef2;
+    --ink-2:#b3c3cc;
+    --muted:#8699a4;
+    --rule:#243740;
+    --rule-strong:#354c57;
+    --accent:#4fbdb5;
+    --accent-soft:#12312f;
+    --pass:#6fc394;
+    --pass-soft:#12291d;
+    --fail:#e08585;
+    --fail-soft:#2b1616;
+    --warn:#d8a24a;
+    --warn-soft:#2b2010;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0d1418;
+  --surface:#131d23;
+  --surface-2:#18242b;
+  --ink:#e6eef2;
+  --ink-2:#b3c3cc;
+  --muted:#8699a4;
+  --rule:#243740;
+  --rule-strong:#354c57;
+  --accent:#4fbdb5;
+  --accent-soft:#12312f;
+  --pass:#6fc394;
+  --pass-soft:#12291d;
+  --fail:#e08585;
+  --fail-soft:#2b1616;
+  --warn:#d8a24a;
+  --warn-soft:#2b2010;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:var(--f-serif);
+  font-size:16.5px;
+  line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{
+  max-width:1180px;
+  margin:0 auto;
+  padding-inline:20px;
+  padding-block:0;
+}
+
+/* ---------- masthead ---------- */
+.masthead{
+  border-bottom:2px solid var(--ink);
+  padding-block:clamp(34px,6vw,60px) 22px;
+}
+.eyebrow{
+  font-family:var(--f-mono);
+  font-size:11.5px;
+  letter-spacing:.14em;
+  text-transform:uppercase;
+  color:var(--accent);
+  margin:0 0 14px;
+}
+h1{
+  font-family:var(--f-sans);
+  font-weight:700;
+  font-size:clamp(30px,5.4vw,50px);
+  line-height:1.06;
+  letter-spacing:-.02em;
+  margin:0 0 14px;
+  text-wrap:balance;
+}
+.standfirst{
+  font-size:clamp(17px,2.2vw,20px);
+  color:var(--ink-2);
+  max-width:60ch;
+  margin:0 0 26px;
+  text-wrap:pretty;
+}
+.meta-row{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px 26px;
+  font-family:var(--f-mono);
+  font-size:12px;
+  color:var(--muted);
+}
+.meta-row b{color:var(--ink-2);font-weight:500}
+
+/* ---------- layout ---------- */
+.shell{
+  display:grid;
+  grid-template-columns:200px minmax(0,1fr);
+  gap:var(--gap);
+  align-items:start;
+  padding-block:var(--gap) 60px;
+}
+@media (max-width:900px){
+  .shell{grid-template-columns:minmax(0,1fr)}
+  .toc{position:static;max-height:none;margin-bottom:6px}
+}
+.toc{
+  position:sticky;
+  top:16px;
+  max-height:calc(100vh - 32px);
+  overflow-y:auto;
+  font-family:var(--f-sans);
+  font-size:13px;
+  border-left:2px solid var(--rule);
+  padding-left:14px;
+}
+.toc h2{
+  font-size:11px;
+  letter-spacing:.13em;
+  text-transform:uppercase;
+  color:var(--muted);
+  margin:0 0 10px;
+  font-weight:600;
+}
+.toc ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px}
+.toc a{
+  color:var(--ink-2);
+  text-decoration:none;
+  display:block;
+  line-height:1.35;
+}
+.toc a:hover,.toc a:focus-visible{color:var(--accent)}
+.toc .num{font-family:var(--f-mono);font-size:11px;color:var(--muted);margin-right:6px}
+
+main{min-width:0}
+section{margin-bottom:clamp(38px,6vw,62px);scroll-margin-top:18px}
+h2.sec{
+  font-family:var(--f-sans);
+  font-weight:700;
+  font-size:clamp(21px,3vw,27px);
+  letter-spacing:-.012em;
+  line-height:1.2;
+  margin:0 0 6px;
+  padding-bottom:9px;
+  border-bottom:1px solid var(--rule-strong);
+  text-wrap:balance;
+}
+h2.sec .n{
+  font-family:var(--f-mono);
+  font-size:.62em;
+  color:var(--accent);
+  margin-right:.6em;
+  font-weight:500;
+}
+h3{
+  font-family:var(--f-sans);
+  font-weight:600;
+  font-size:16.5px;
+  letter-spacing:-.005em;
+  margin:26px 0 8px;
+  color:var(--ink);
+}
+h4{
+  font-family:var(--f-mono);
+  font-weight:500;
+  font-size:12px;
+  letter-spacing:.09em;
+  text-transform:uppercase;
+  color:var(--muted);
+  margin:20px 0 7px;
+}
+p{margin:0 0 14px;max-width:var(--measure)}
+ul,ol.body{margin:0 0 14px;padding-left:19px;max-width:var(--measure)}
+li{margin-bottom:6px}
+a{color:var(--accent)}
+code{
+  font-family:var(--f-mono);
+  font-size:.86em;
+  background:var(--surface-2);
+  padding:1px 5px;
+  border-radius:3px;
+  color:var(--ink-2);
+}
+strong{font-weight:600;color:var(--ink)}
+em{font-style:italic}
+
+/* ---------- key figure strip ---------- */
+.figs{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(148px,1fr));
+  gap:1px;
+  background:var(--rule);
+  border:1px solid var(--rule);
+  margin:0 0 8px;
+}
+.fig{background:var(--surface);padding:15px 16px}
+.fig .v{
+  font-family:var(--f-sans);
+  font-weight:700;
+  font-size:26px;
+  letter-spacing:-.02em;
+  line-height:1.1;
+  font-variant-numeric:tabular-nums;
+}
+.fig .k{
+  font-family:var(--f-mono);
+  font-size:10.5px;
+  letter-spacing:.07em;
+  text-transform:uppercase;
+  color:var(--muted);
+  margin-top:5px;
+  line-height:1.4;
+}
+.fig .d{font-size:12.5px;color:var(--ink-2);margin-top:3px;font-family:var(--f-sans)}
+
+/* ---------- tables ---------- */
+.tscroll{overflow-x:auto;margin:0 0 16px;border:1px solid var(--rule)}
+table{border-collapse:collapse;width:100%;font-family:var(--f-sans);font-size:13.5px;background:var(--surface)}
+caption{
+  caption-side:top;
+  text-align:left;
+  font-family:var(--f-mono);
+  font-size:11px;
+  letter-spacing:.07em;
+  text-transform:uppercase;
+  color:var(--muted);
+  padding:9px 12px;
+  background:var(--surface-2);
+  border-bottom:1px solid var(--rule);
+}
+th,td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--rule);vertical-align:top}
+thead th{
+  font-weight:600;
+  font-size:11.5px;
+  letter-spacing:.05em;
+  text-transform:uppercase;
+  color:var(--muted);
+  background:var(--surface-2);
+  white-space:nowrap;
+}
+tbody tr:last-child td{border-bottom:none}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--f-mono);font-size:12.5px;white-space:nowrap}
+td.jid{font-family:var(--f-mono);font-size:12px;color:var(--muted);white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.up{color:var(--pass);font-weight:600}
+.down{color:var(--fail);font-weight:600}
+
+/* ---------- verdict chips ---------- */
+.chip{
+  display:inline-block;
+  font-family:var(--f-mono);
+  font-size:10px;
+  letter-spacing:.09em;
+  text-transform:uppercase;
+  padding:2px 7px;
+  border-radius:2px;
+  white-space:nowrap;
+  font-weight:500;
+}
+.chip.pass{background:var(--pass-soft);color:var(--pass);border:1px solid color-mix(in srgb,var(--pass) 35%,transparent)}
+.chip.fail{background:var(--fail-soft);color:var(--fail);border:1px solid color-mix(in srgb,var(--fail) 35%,transparent)}
+.chip.warn{background:var(--warn-soft);color:var(--warn);border:1px solid color-mix(in srgb,var(--warn) 35%,transparent)}
+
+/* ---------- experiment entries ---------- */
+.log{display:flex;flex-direction:column;gap:0;border-top:1px solid var(--rule-strong)}
+.entry{
+  display:grid;
+  grid-template-columns:76px minmax(0,1fr);
+  gap:0 18px;
+  padding:17px 0;
+  border-bottom:1px solid var(--rule);
+}
+@media (max-width:640px){
+  .entry{grid-template-columns:minmax(0,1fr);gap:8px}
+}
+.entry .rail{
+  font-family:var(--f-mono);
+  font-size:11px;
+  color:var(--muted);
+  line-height:1.5;
+  padding-top:2px;
+}
+.entry .rail .job{color:var(--accent);display:block}
+.entry h3{margin:0 0 5px;font-size:15.5px;display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
+.entry p{margin:0 0 9px;font-size:15px;max-width:var(--measure)}
+.entry p:last-child{margin-bottom:0}
+.why{
+  border-left:2px solid var(--accent);
+  padding:2px 0 2px 13px;
+  margin:9px 0 0;
+  font-size:14.5px;
+  color:var(--ink-2);
+  max-width:var(--measure);
+}
+.why b{
+  font-family:var(--f-mono);
+  font-size:10.5px;
+  letter-spacing:.09em;
+  text-transform:uppercase;
+  color:var(--accent);
+  display:block;
+  margin-bottom:2px;
+  font-weight:500;
+}
+
+/* ---------- callout ---------- */
+.callout{
+  background:var(--surface);
+  border:1px solid var(--rule-strong);
+  border-top:3px solid var(--accent);
+  padding:16px 18px;
+  margin:0 0 18px;
+}
+.callout p{margin:0;max-width:64ch}
+.callout p+p{margin-top:10px}
+.callout.warnbox{border-top-color:var(--warn)}
+
+/* ---------- chart ---------- */
+.chartwrap{border:1px solid var(--rule);background:var(--surface);padding:14px 10px 6px;margin:0 0 16px;overflow-x:auto}
+.chartwrap svg{display:block;min-width:600px;max-width:100%;height:auto}
+.legend{display:flex;flex-wrap:wrap;gap:14px;padding:6px 8px 8px;font-family:var(--f-mono);font-size:11.5px;color:var(--ink-2)}
+.legend i{display:inline-block;width:20px;height:3px;vertical-align:middle;margin-right:6px}
+
+/* ---------- misc ---------- */
+.pill-row{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 16px}
+.stack{display:flex;flex-direction:column;gap:10px;margin:0 0 16px}
+.note{font-size:13.5px;color:var(--muted);max-width:var(--measure);font-family:var(--f-sans)}
+hr.soft{border:0;border-top:1px solid var(--rule);margin:26px 0}
+footer{
+  border-top:2px solid var(--ink);
+  padding-block:22px 46px;
+  font-family:var(--f-mono);
+  font-size:11.5px;
+  color:var(--muted);
+}
+footer p{max-width:70ch;margin:0 0 7px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ---------- diagrams ---------- */
+.diagram{
+  border:1px solid var(--rule);
+  background:var(--surface);
+  padding:14px 12px 8px;
+  margin:0 0 8px;
+  overflow-x:auto;
+}
+.diagram pre.mermaid{
+  margin:0;
+  background:transparent;
+  text-align:center;
+  min-width:520px;
+}
+.figcap{
+  font-family:var(--f-mono);
+  font-size:11px;
+  letter-spacing:.05em;
+  color:var(--muted);
+  margin:0 0 20px;
+  max-width:var(--measure);
+  line-height:1.55;
+}
+.figcap b{color:var(--ink-2);font-weight:500;text-transform:uppercase;letter-spacing:.09em}
+
+/* ---------- process entries ---------- */
+.proc{
+  border:1px solid var(--rule);
+  background:var(--surface);
+  padding:15px 17px;
+  margin:0 0 11px;
+}
+.proc h3{margin:0 0 4px;font-size:15.5px}
+.proc .cmd{
+  font-family:var(--f-mono);
+  font-size:11.5px;
+  color:var(--accent);
+  margin:0 0 9px;
+  word-break:break-all;
+}
+.proc dl{margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px 12px}
+@media (max-width:560px){.proc dl{grid-template-columns:minmax(0,1fr);gap:2px}}
+.proc dt{
+  font-family:var(--f-mono);
+  font-size:10.5px;
+  letter-spacing:.09em;
+  text-transform:uppercase;
+  color:var(--muted);
+  padding-top:3px;
+}
+.proc dd{margin:0;font-size:14.5px;max-width:64ch}
+
+/* ---------- print / PDF ---------- */
+@media print{
+  :root{
+    --paper:#fff;--surface:#fff;--surface-2:#f2f5f6;
+    --ink:#000;--ink-2:#222;--muted:#555;
+    --rule:#bbb;--rule-strong:#777;--accent:#0a5b57;
+  }
+  body{font-size:10.5pt;line-height:1.5;background:#fff}
+  .wrap{max-width:none;padding-inline:0}
+  .toc{display:none}
+  .shell{display:block;padding-block:0}
+  section{margin-bottom:20pt;page-break-inside:auto}
+  h2.sec{page-break-after:avoid;font-size:15pt;margin-top:18pt}
+  h3,h4{page-break-after:avoid}
+  .entry,.proc,.callout,.tscroll,.chartwrap,.diagram,table{page-break-inside:avoid}
+  .tscroll,.chartwrap,.diagram{overflow:visible}
+  .chartwrap svg,.diagram pre.mermaid{min-width:0;max-width:100%}
+  .masthead{padding-block:0 12pt}
+  h1{font-size:22pt}
+  .standfirst{font-size:11.5pt}
+  a{color:inherit;text-decoration:none}
+  footer{page-break-before:avoid}
+}
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <p class="eyebrow">M.Tech Project Report &middot; Phase One</p>
+    <h1>Mask2Flow-TSE: a two-stage target speaker extraction system</h1>
+    <p class="standfirst">A from-scratch reproduction of Moon et&nbsp;al. (arXiv:2603.12837) — masking plus rectified flow matching — carried from first training run to a validated, cross-corpus-verified system, with every accepted and rejected change recorded against decision rules fixed in advance.</p>
+    <div class="meta-row">
+      <span><b>Corpus</b> LibriSpeech + Libri2Mix</span>
+      <span><b>Compute</b> SLURM / Tesla P100</span>
+      <span><b>Record</b> 36 timeline entries, ~40 evaluated jobs</span>
+      <span><b>Status</b> Phase One complete</span>
+    </div>
+    <p class="note" style="margin-top:14px">To save a copy: print this page (Ctrl/Cmd&nbsp;+&nbsp;P) and choose <strong>Save as PDF</strong> — the layout is styled for print, and the section index is dropped automatically.</p>
+  </header>
+
+  <div class="shell">
+    <nav class="toc" aria-label="Section index">
+      <h2>Contents</h2>
+      <ol>
+        <li><a href="#s1"><span class="num">01</span>Summary</a></li>
+        <li><a href="#s2"><span class="num">02</span>Problem &amp; objective</a></li>
+        <li><a href="#s3"><span class="num">03</span>System architecture</a></li>
+        <li><a href="#s4"><span class="num">04</span>Training method</a></li>
+        <li><a href="#s5"><span class="num">05</span>Evaluation method</a></li>
+        <li><a href="#s6"><span class="num">06</span>Results</a></li>
+        <li><a href="#s6b"><span class="num">06b</span>Processes run</a></li>
+        <li><a href="#s7"><span class="num">07</span>Decision log</a></li>
+        <li><a href="#s8"><span class="num">08</span>Ceiling analysis</a></li>
+        <li><a href="#s9"><span class="num">09</span>Limitations</a></li>
+        <li><a href="#s10"><span class="num">10</span>Engineering record</a></li>
+        <li><a href="#s11"><span class="num">11</span>Infrastructure</a></li>
+        <li><a href="#s12"><span class="num">12</span>Phase Two</a></li>
+      </ol>
+    </nav>
+
+    <main>
+
+      <!-- 1 -->
+      <section id="s1">
+        <h2 class="sec"><span class="n">01</span>Summary</h2>
+        <p>This project implements Mask2Flow-TSE from the paper alone — no reference code exists — and takes it from an untrained network to a system validated on two independently constructed corpora, three speaker-count conditions, and a listening test.</p>
+
+        <div class="figs">
+          <div class="fig"><div class="v">86.2%</div><div class="k">Corpus-wide accuracy</div><div class="d">vs 71.0% doing nothing</div></div>
+          <div class="fig"><div class="v">+1.75 dB</div><div class="k">SI-SDR vs mixture</div><div class="d">in-domain, n=2620</div></div>
+          <div class="fig"><div class="v">+3.39 dB</div><div class="k">Libri2Mix SI-SDR</div><div class="d">cross-corpus, n=6000</div></div>
+          <div class="fig"><div class="v">80.3%</div><div class="k">Low-SNR accuracy</div><div class="d">from 61.3% at Phase&nbsp;One start</div></div>
+        </div>
+        <p class="note">Speaker-verification accuracy is <code>1&nbsp;&minus;&nbsp;EER</code> over genuine/impostor trials across the whole evaluated set. The do-nothing baseline scores the unprocessed mixture through the same chain.</p>
+
+        <h3>What was achieved</h3>
+        <ul>
+          <li><strong>A working two-stage system</strong> — 88.5M trained parameters across a BiLSTM masking stage and a 9-block DiT flow-matching stage, plus a HiFi-GAN vocoder trained from scratch on this project's own mel configuration.</li>
+          <li><strong>Three characterized limitations diagnosed, two substantially mitigated.</strong> The catastrophic-outlier rate fell 3.6&times; (12.7% &rarr; 3.5%); the sub-1&nbsp;dB SNR coverage gap was closed (low-SNR accuracy 61.3% &rarr; 80.3%); speaker-count generalization improved from 72.6% to 77.0% at four speakers.</li>
+          <li><strong>Cross-corpus validation</strong> on Libri2Mix, a benchmark built independently of this project's mixer, confirming the gains are not an artifact of the in-house data pipeline.</li>
+          <li><strong>A quantified ceiling</strong> (§8): the remaining extraction headroom is ~4.6&nbsp;pp and lies almost entirely in Stage&nbsp;1, while the measurement chain itself costs ~9.7&nbsp;pp.</li>
+        </ul>
+
+        <h3>Method note</h3>
+        <div class="callout">
+          <p>From the low-SNR campaign onward, <strong>every candidate was judged against a decision rule written down before its results were seen</strong> — a target, a set of retention bars, and what to do in each outcome. Fifteen candidate changes were evaluated in Phase One; <strong>four were promoted and eleven rejected</strong>, several of which looked like improvements on the metric that motivated them.</p>
+          <p>One promotion (§7, entry&nbsp;K) knowingly overrode two of its own pre-registered bars. That override, and the evidence for it, is reported here rather than smoothed away.</p>
+        </div>
+      </section>
+
+      <!-- 2 -->
+      <section id="s2">
+        <h2 class="sec"><span class="n">02</span>Problem and objective</h2>
+        <p><strong>Target speaker extraction (TSE)</strong> isolates one chosen talker from a mixture of simultaneous voices, given a short reference recording of that talker. Unlike blind source separation, which returns every source and leaves the caller to decide which is which, TSE returns exactly one signal and must decide identity itself. That makes speaker identity — not just signal quality — the thing that has to be right.</p>
+
+        <h3>Objective</h3>
+        <p>Reproduce Moon et&nbsp;al., <em>Mask2Flow-TSE</em> (arXiv:2603.12837, submitted to Interspeech 2026), from the paper text alone. No public implementation exists, so every architectural and training decision had to be derived from the description and then verified against measured behaviour.</p>
+
+        <h3>What counts as success</h3>
+        <p>Three things, in order of weight:</p>
+        <ol class="body">
+          <li><strong>Signal quality</strong> — SI-SDR improvement over the unprocessed mixture, the standard metric in the separation literature and therefore the one comparable to outside work.</li>
+          <li><strong>Speaker fidelity</strong> — verification accuracy of the extracted audio against the enrollment clip. This is the metric specific to <em>target</em> extraction: a system can score acceptably on SI-SDR while leaking the wrong talker.</li>
+          <li><strong>Honesty of the record</strong> — limitations characterized with a root cause rather than reported as aggregate scores that hide them. Several results below are negative, and they are the more useful half of the report.</li>
+        </ol>
+      </section>
+
+      <!-- 3 -->
+      <section id="s3">
+        <h2 class="sec"><span class="n">03</span>System architecture</h2>
+        <p>Four components in series. Only the first two are trained as the system proper; the vocoder and speaker encoder are supporting infrastructure, which turns out to matter a great deal (§8).</p>
+
+        <div class="tscroll">
+          <table>
+            <caption>Component inventory</caption>
+            <thead><tr><th>Component</th><th>Role</th><th class="num">Parameters</th><th>State</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Stage 1</strong> — Masking Module</td><td>Predicts a soft mask over the mixture's log-mel</td><td class="num">11,160,176</td><td>Trained, fine-tuned once</td></tr>
+              <tr><td><strong>Stage 2</strong> — Flow Matching (DiT)</td><td>Refines Stage 1's output toward the clean target</td><td class="num">77,260,624</td><td>Trained, fine-tuned four times</td></tr>
+              <tr><td>Speaker Encoder — WavLM</td><td>Produces the d-vector from the enrollment clip</td><td class="num">94,400,000</td><td>Frozen (pre-trained)</td></tr>
+              <tr><td>Speaker projection</td><td>Maps WavLM output to 512-d conditioning</td><td class="num">393,728</td><td>Trained</td></tr>
+              <tr><td>Vocoder — HiFi-GAN</td><td>Log-mel back to waveform</td><td class="num">&mdash;</td><td>Trained from scratch, frozen since 2026-08-20</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Full pipeline</h3>
+        <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+    MIX["Mixture audio<br/>target + interferer(s), 16kHz"] --> MELX["Mel extractor<br/>80-dim, Whisper-aligned<br/>n_fft=1024, hop=160, win=400"]
+    REF["Reference audio<br/>target speaker, different utterance"] --> WAVLM
+
+    subgraph SE["Speaker Encoder — frozen, 94.4M"]
+        WAVLM["WavLM-base-plus-sv<br/>consumes the RAW waveform —<br/>bypasses the mel pipeline entirely"] --> POOL["Mean-pool over time"]
+        POOL --> PROJ["Linear 768 to 512<br/>the only TRAINED part"]
+        PROJ --> NORM["L2-normalize"]
+    end
+    NORM --> D["d — 512-dim speaker embedding"]
+
+    MELX --> S1
+    D --> S1
+    subgraph S1["Stage 1 — Masking, 11.2M"]
+        S1BODY["Conv2D x4 then BiLSTM x2<br/>d concatenated at both layers<br/>Linear + Sigmoid mask"]
+    end
+    S1 --> XENH["X_enh = X mask-product M"]
+
+    XENH --> S2
+    D --> S2
+    subgraph S2["Stage 2 — Flow Matching DiT, 77.3M"]
+        S2BODY["4 Euler steps, each re-running<br/>the full DiT stack twice<br/>for classifier-free guidance"]
+    end
+    S2 --> YHAT["Extracted log-mel"]
+
+    YHAT --> VOC["HiFi-GAN Vocoder"]
+    VOC --> WAVE["Extracted waveform, 16kHz"]
+</pre>
+        </div>
+        <p class="figcap"><b>Figure 1</b> &nbsp;End-to-end pipeline. Rebuilt from the running code after an audit found four errors in the original hand-drawn diagrams — most consequentially, the reference path had been drawn through the mel extractor, when WavLM in fact consumes the raw waveform through its own front end.</p>
+
+        <h3>Signal path</h3>
+        <ol class="body">
+          <li>Mixture waveform &rarr; log-mel spectrogram (80 mels, <code>n_fft</code>&nbsp;1024, hop&nbsp;160, win&nbsp;400 at 16&nbsp;kHz — a Whisper-aligned configuration).</li>
+          <li>Enrollment waveform &rarr; WavLM &rarr; projection &rarr; 512-d speaker vector <code>d</code>. WavLM consumes the <em>raw waveform</em> directly; it never touches this project's mel pipeline.</li>
+          <li>Stage&nbsp;1: <code>X_enh = X ⊙ M</code>, mask in [0,1] from a sigmoid, applied to the log-mel.</li>
+          <li>Stage&nbsp;2: four Euler steps of a rectified-flow velocity field, conditioned on <code>d</code>, with classifier-free guidance at scale 2.5.</li>
+          <li>HiFi-GAN vocoder &rarr; waveform.</li>
+        </ol>
+
+        <h3>Stage 1 — masking</h3>
+        <p>Four Conv2d layers into a 2-layer BiLSTM (416 hidden units), matching the paper's §5.2.2. The mask multiplies the log-mel, exactly as the paper's Eq.&nbsp;9 specifies. The speaker vector is concatenated at <em>both</em> LSTM layers, not only the input.</p>
+        <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+    XMEL["Mixture mel X, shape B x 80 x T"] --> L2N["L2-normalize"]
+    L2N --> CONV["Conv2D x4, kernel 3<br/>channels 1-4-6-8-8"]
+    CONV --> FLAT["Flatten to B x T x 640"]
+    FLAT --> CAT1["Concat d, to B x T x 1152"]
+    D1["d, 512-dim"] --> CAT1
+    CAT1 --> LSTM1["BiLSTM layer 1<br/>hidden 416, output 832"]
+    LSTM1 --> CAT2["Concat d again, to B x T x 1344"]
+    D2["d, 512-dim"] --> CAT2
+    CAT2 --> LSTM2["BiLSTM layer 2<br/>hidden 416, output 832"]
+    LSTM2 --> MASKPROJ["Linear 832 to 80, then Sigmoid"]
+    MASKPROJ --> MASK["Mask M in 0..1"]
+    MASK --> APPLY["X_enh = X times M<br/>applied to the ORIGINAL<br/>non-normalized X"]
+</pre>
+        </div>
+        <p class="figcap"><b>Figure 2</b> &nbsp;Stage 1. The final step is the one that matters for §7: the mask is applied to the original log-mel, whose quiet bins are negative — which is why "multiply by a value in [0,1]" does not mean "attenuate".</p>
+        <div class="callout warnbox">
+          <p><strong>A structural finding about this formulation.</strong> This project's log-mel is <code>log(mel + 1e-8)</code>, so every bin quieter than unit linear power is <em>negative</em>. Multiplying a negative value by a mask in [0,1] moves it <em>toward zero</em> — that is, makes it <strong>louder</strong>. So "pure deletion" holds only where the log-mel is non-negative. Measured on real audio: <strong>74.2% of mixture bins are negative at low SNR</strong>, and 73.5% of target bins are unreachable by <em>any</em> mask in [0,1].</p>
+          <p>The paper reports D=100% / I=0% (deletion only, no insertion) and does not specify its log offset or base, so this is an <em>under-specified paper detail</em> rather than an implementation error. It became the central question of the low-SNR campaign (§7).</p>
+        </div>
+
+        <h3>Stage 2 — flow matching</h3>
+        <p>A 9-block DiT (768-dim, 8 heads) with rotary position embeddings and AdaLN-Zero conditioning. Trained with a rectified-flow objective on <em>frozen</em> Stage 1 output, so Stage 2 only ever learns to correct the specific error distribution Stage 1 produces — a coupling that explains several later results (§7 entries&nbsp;J, N and §9).</p>
+        <p>Inference integrates the velocity field with four Euler steps. Classifier-free guidance blends conditional and unconditional velocities: <code>v = v_uncond + s·(v_cond − v_uncond)</code>.</p>
+
+        <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+    XT["x_t, shape B x 80 x T"] --> CATX["Concat d"]
+    D["d — real speaker, or the learned<br/>null embedding for the<br/>unconditional CFG pass"] --> CATX
+    CATX --> INPROJ["Linear 592 to 768"]
+    INPROJ --> DIT["9x DiT blocks<br/>AdaLN-Zero conditioning<br/>RoPE self-attention<br/>FFN 768-1536-768"]
+
+    T["timestep t"] --> TEMB["Timestep embedding<br/>sinusoidal 256, MLP to 768"]
+    D --> SPKPROJ["Speaker projection 512 to 768"]
+    TEMB --> CSUM["c = t_emb + d_emb"]
+    SPKPROJ --> CSUM
+    CSUM -.->|"conditions every block"| DIT
+
+    DIT --> FINALMOD["Final AdaLN modulation<br/>gamma and beta from c<br/>MISSING from the original diagram"]
+    FINALMOD --> OUTPROJ["Output projection 768 to 80<br/>zero-initialized"]
+    OUTPROJ --> V["velocity v"]
+</pre>
+        </div>
+        <p class="figcap"><b>Figure 3</b> &nbsp;The Stage 2 network — one velocity evaluation. The final AdaLN modulation block was absent from the original diagram; its presence was confirmed by an exact parameter-count match against the training log's <code>Output: 1,242,704 params</code>.</p>
+
+        <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+    X0["x0 = X_enh, the Stage 1 output"] --> LOOP
+    subgraph LOOP["repeat for step 0 to 3, dt = 0.25"]
+        direction TB
+        TS["t = step x dt"] --> VC["v_cond from the real speaker"]
+        TS --> VU["v_uncond from the null speaker"]
+        VC --> CFG["v = v_uncond + 2.5 x (v_cond - v_uncond)"]
+        VU --> CFG
+        CFG --> UPD["x = x + v x dt"]
+    end
+    LOOP --> YHAT["Extracted log-mel"]
+</pre>
+        </div>
+        <p class="figcap"><b>Figure 4</b> &nbsp;The integration loop, drawn separately because the paper's default is a single step while this system runs four — each one evaluating the network twice. The guidance scale shown, 2.5, is the re-tuned value from §7; it was 1.5 for most of the project's life.</p>
+
+        <h3>Architecture verification</h3>
+        <p>The architecture diagrams supplied at the start of the project were audited line-by-line against the running code, and four real errors were found and corrected: the reference-audio path was drawn through the mel extractor (WavLM takes raw waveform); inference was drawn as a single Euler step (the deployed configuration runs four); a final AdaLN modulation layer was missing entirely — confirmed by an exact parameter-count match against the training log's <code>Output: 1,242,704 params</code>; and the vocoder's "element-wise sum" is in fact an average. The corrected diagrams were rebuilt as Mermaid so they live in the repository as checked-in text and cannot silently drift from the code again.</p>
+      </section>
+
+      <!-- 4 -->
+      <section id="s4">
+        <h2 class="sec"><span class="n">04</span>Training method</h2>
+
+        <h3>Data and mixture construction</h3>
+        <p>Mixtures are built on the fly rather than pre-generated, so every epoch sees fresh speaker pairings and SNRs. Each sample draws a target speaker, one or more interferers, and a reference utterance that is always a <em>different</em> recording of the target speaker.</p>
+
+        <div class="tscroll">
+          <table>
+            <caption>Training configuration</caption>
+            <thead><tr><th>Setting</th><th>Value</th><th>Note</th></tr></thead>
+            <tbody>
+              <tr><td>Segment length</td><td class="num">10 s</td><td>at 16 kHz</td></tr>
+              <tr><td>Enrollment length</td><td class="num">3.0 s</td><td>swept in Phase One; 3.0 s won (§7&nbsp;O)</td></tr>
+              <tr><td>SNR range</td><td class="num">1 to 10 dB</td><td>the floor that caused limitation §9.2</td></tr>
+              <tr><td>Conditions</td><td class="num">clean / additive / reverb</td><td>0.33 / 0.33 / 0.34</td></tr>
+              <tr><td>Stage 1 schedule</td><td class="num">200k steps</td><td>lr 2e-4, EMA 0.9999</td></tr>
+              <tr><td>Stage 2 schedule</td><td class="num">300k steps</td><td>lr 2e-4, CFG dropout 0.1</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Curriculum fine-tuning</h3>
+        <p>Rather than retraining from scratch for each hypothesis, most changes were made as fine-tunes from a known checkpoint with a modified sampling curriculum. This makes a change attributable: only the curriculum differs, so a difference in results is a difference in that curriculum.</p>
+        <p>Two curricula were used repeatedly: a <strong>speaker-count</strong> curriculum drawing 2, 3 or 4 total speakers at P = 0.5 / 0.3 / 0.2, and a <strong>low-SNR</strong> curriculum drawing a fraction of samples from [−10, 1)&nbsp;dB. A design rule emerged and was applied consistently: <em>when fine-tuning for a new condition, keep the curriculum that produced the validated behaviour switched on</em>, or the fine-tune hands back the previous win while chasing the new one.</p>
+
+        <div class="callout">
+          <p><strong>The validation loss was never trusted as a selection signal.</strong> The validation set is 2-speaker at trained SNR, so a fine-tune training on a harder mixture is measured on an easier distribution than it is learning. Across five fine-tunes the proxy was flat or worse while the real metrics improved — and once (the Stage&nbsp;2 adaptation, §7&nbsp;K) it improved while two headline metrics worsened. Checkpoint selection therefore used the final step, not the best-by-validation step, and promotion always required the full battery.</p>
+        </div>
+      </section>
+
+      <!-- 5 -->
+      <section id="s5">
+        <h2 class="sec"><span class="n">05</span>Evaluation method</h2>
+        <p>Three metric families, deliberately given different weights, because they disagree — and the disagreements turned out to be informative rather than noise.</p>
+
+        <div class="tscroll">
+          <table>
+            <caption>Metric hierarchy and rationale</caption>
+            <thead><tr><th>Tier</th><th>Metric</th><th>Why this weight</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Primary</strong></td><td>SI-SDR improvement</td><td>Field standard; comparable to outside work. Reported as a median, because the mean is dominated by the outlier tail.</td></tr>
+              <tr><td><strong>Secondary</strong></td><td>Speaker-verification accuracy (1&nbsp;&minus;&nbsp;EER), AUC</td><td>The metric specific to <em>target</em> extraction. SI-SDR alone cannot tell whether the right talker was extracted.</td></tr>
+              <tr><td><strong>Diagnostic</strong></td><td>Mel-MSE improvement, catastrophic rate</td><td>Internal only. "% improvement in mel MSE" is unbounded and non-standard, so it is never a headline — but it is what located every failure mode in §9.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>The evaluation battery</h3>
+        <p>Every promotion candidate ran the same five-stage battery, ordered so the decisive stage runs first and a bad candidate can be cancelled early:</p>
+        <ol class="body">
+          <li>Controlled in-domain low-SNR test, n=300 at [−10,1)&nbsp;dB — same corpus, mixer, speakers and seed as the baseline, so only the checkpoint differs.</li>
+          <li>Libri2Mix cross-corpus, n=6000 — yields both the in-distribution and out-of-distribution slices from one run.</li>
+          <li>In-domain full test-clean, n=2620 — the primary headline.</li>
+          <li>Corpus-wide verification accuracy, n=400.</li>
+          <li>Speaker-count conditions: 2, 3 and 4 speakers, n=300 each.</li>
+        </ol>
+
+        <div class="callout">
+          <p><strong>Paired-comparison discipline.</strong> Each battery reports two checkpoint-independent probes — the unprocessed mixture and the ground-truth target — passed through the identical chain. If those match the baseline run to four decimals, the two runs scored the same samples and the comparison is genuinely paired.</p>
+          <p>This check earned its keep twice. When enrollment length and the speaker projection were changed (§7&nbsp;O, Q), the probes <em>moved</em> — revealing that those changes had altered the reference embedding itself, so the apparent system numbers were being measured on a different scale rather than reflecting better extraction.</p>
+        </div>
+      </section>
+
+      <!-- 6 -->
+      <section id="s6">
+        <h2 class="sec"><span class="n">06</span>Results</h2>
+
+        <h3>Current system</h3>
+        <div class="tscroll">
+          <table>
+            <caption>Deployed configuration — job 11112, cfg_scale 2.5</caption>
+            <thead><tr><th>Condition</th><th class="num">Do nothing</th><th class="num">This system</th><th class="num">Ceiling</th><th class="num">SI-SDR vs mix</th></tr></thead>
+            <tbody>
+              <tr class="hl"><td>Corpus-wide (n=400)</td><td class="num">71.0%</td><td class="num"><strong>86.2%</strong></td><td class="num">90.8%</td><td class="num">&mdash;</td></tr>
+              <tr><td>2 speakers (n=300)</td><td class="num">70.3%</td><td class="num">85.7%</td><td class="num">90.3%</td><td class="num">+1.88 dB</td></tr>
+              <tr><td>3 speakers (n=300)</td><td class="num">64.3%</td><td class="num">80.0%</td><td class="num">90.3%</td><td class="num">+2.31 dB</td></tr>
+              <tr><td>4 speakers (n=300)</td><td class="num">61.4%</td><td class="num">77.0%</td><td class="num">90.3%</td><td class="num">+2.37 dB</td></tr>
+              <tr><td>Low SNR [−10,1) dB</td><td class="num">64.0%</td><td class="num">80.3%</td><td class="num">90.3%</td><td class="num">+6.51 dB</td></tr>
+              <tr><td>In-domain (n=2620)</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="num">+1.75 dB</td></tr>
+              <tr><td>Libri2Mix (n=6000)</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="num">+3.39 dB</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>How accuracy evolved</h3>
+        <p>The promoted path only — each point is a full battery run. Rejected candidates are listed in §7.</p>
+
+        <div class="chartwrap">
+          <svg viewBox="0 0 720 330" role="img" aria-label="Line chart of speaker-verification accuracy across six promoted checkpoints, for 2, 3 and 4 speaker conditions, ranging 70 to 90 percent">
+            <g stroke="var(--rule)" stroke-width="1">
+              <line x1="48" y1="16" x2="704" y2="16"></line>
+              <line x1="48" y1="80" x2="704" y2="80"></line>
+              <line x1="48" y1="144" x2="704" y2="144"></line>
+              <line x1="48" y1="208" x2="704" y2="208"></line>
+              <line x1="48" y1="272" x2="704" y2="272"></line>
+            </g>
+            <g fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="10" text-anchor="end">
+              <text x="42" y="20">90%</text>
+              <text x="42" y="84">85%</text>
+              <text x="42" y="148">80%</text>
+              <text x="42" y="212">75%</text>
+              <text x="42" y="276">70%</text>
+            </g>
+            <!-- 2 speakers -->
+            <polyline fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"
+              points="48,63.4 179.2,58.2 310.4,50.6 441.6,81.3 572.8,89 704,71"></polyline>
+            <!-- 3 speakers -->
+            <polyline fill="none" stroke="var(--warn)" stroke-width="2.5" stroke-linejoin="round" stroke-dasharray="7 4"
+              points="48,186.2 179.2,119.7 310.4,117.1 441.6,144 572.8,165.8 704,144"></polyline>
+            <!-- 4 speakers -->
+            <polyline fill="none" stroke="var(--fail)" stroke-width="2.5" stroke-linejoin="round" stroke-dasharray="2 4" stroke-linecap="round"
+              points="48,238.7 179.2,186.2 310.4,182.4 441.6,202.9 572.8,209.3 704,182.4"></polyline>
+            <g fill="var(--accent)">
+              <circle cx="48" cy="63.4" r="3.5"></circle><circle cx="179.2" cy="58.2" r="3.5"></circle>
+              <circle cx="310.4" cy="50.6" r="3.5"></circle><circle cx="441.6" cy="81.3" r="3.5"></circle>
+              <circle cx="572.8" cy="89" r="3.5"></circle><circle cx="704" cy="71" r="4.5"></circle>
+            </g>
+            <g fill="var(--warn)">
+              <circle cx="48" cy="186.2" r="3.5"></circle><circle cx="179.2" cy="119.7" r="3.5"></circle>
+              <circle cx="310.4" cy="117.1" r="3.5"></circle><circle cx="441.6" cy="144" r="3.5"></circle>
+              <circle cx="572.8" cy="165.8" r="3.5"></circle><circle cx="704" cy="144" r="4.5"></circle>
+            </g>
+            <g fill="var(--fail)">
+              <circle cx="48" cy="238.7" r="3.5"></circle><circle cx="179.2" cy="186.2" r="3.5"></circle>
+              <circle cx="310.4" cy="182.4" r="3.5"></circle><circle cx="441.6" cy="202.9" r="3.5"></circle>
+              <circle cx="572.8" cy="209.3" r="3.5"></circle><circle cx="704" cy="182.4" r="4.5"></circle>
+            </g>
+            <g fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="9.5" text-anchor="middle">
+              <text x="48" y="292">10866</text><text x="48" y="305">baseline</text>
+              <text x="179.2" y="292">10890</text><text x="179.2" y="305">multi-spk</text>
+              <text x="310.4" y="292">11075</text><text x="310.4" y="305">trim fix</text>
+              <text x="441.6" y="292">11081</text><text x="441.6" y="305">new S1</text>
+              <text x="572.8" y="292">11106</text><text x="572.8" y="305">adapt S2</text>
+              <text x="704" y="292">11112</text><text x="704" y="305">cfg 2.5</text>
+            </g>
+          </svg>
+          <div class="legend">
+            <span><i style="background:var(--accent)"></i>2 speakers</span>
+            <span><i style="background:var(--warn)"></i>3 speakers</span>
+            <span><i style="background:var(--fail)"></i>4 speakers</span>
+          </div>
+        </div>
+
+        <p>Two things the shape shows. The rise from 10866 to 11075 is the multi-speaker fine-tune doing what it was built for — 3- and 4-speaker gain sharply while 2-speaker, already covered by training, stays flat. The dip at 11081–11106 is the <em>price of the low-SNR campaign</em>, paid deliberately (§7&nbsp;J–K). The recovery at 11112 came from re-tuning guidance, which cost no training at all.</p>
+
+        <div class="tscroll">
+          <table>
+            <caption>Net movement across Phase One</caption>
+            <thead><tr><th>Condition</th><th class="num">First measured</th><th class="num">Best ever</th><th class="num">Current</th><th class="num">Net</th></tr></thead>
+            <tbody>
+              <tr><td>2 speakers</td><td class="num">86.3%</td><td class="num">87.3%</td><td class="num">85.7%</td><td class="num down">−0.6</td></tr>
+              <tr><td>3 speakers</td><td class="num">76.7%</td><td class="num">82.1%</td><td class="num">80.0%</td><td class="num up">+3.3</td></tr>
+              <tr><td>4 speakers</td><td class="num">72.6%</td><td class="num">77.0%</td><td class="num">77.0%</td><td class="num up">+4.4</td></tr>
+              <tr><td>Low SNR</td><td class="num">61.3%</td><td class="num">80.3%</td><td class="num">80.3%</td><td class="num up">+19.0</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">The 2- and 3-speaker shortfall against "best ever" is the residual cost of low-SNR capability. Four speakers is at its all-time best; low SNR moved from <em>actively harmful</em> (61.3% against a 64.0% do-nothing baseline) to clearly beneficial.</p>
+
+        <h3>Where the ceiling is — oracle decomposition</h3>
+        <p>Stage 1 was replaced by two oracles built from the clean target, isolating how much of the gap is a <em>learnable</em> shortfall of the trained network versus a <em>structural</em> limit of the paper's mask formulation.</p>
+
+        <div class="chartwrap">
+          <svg viewBox="0 0 720 258" role="img" aria-label="Horizontal bar chart comparing accuracy for the trained Stage 1 network, best-mask oracle, and energy-deletion oracle, at low SNR and trained SNR, against a 90.3 percent ceiling">
+            <g stroke="var(--rule)" stroke-width="1">
+              <line x1="150" y1="18" x2="150" y2="200"></line>
+              <line x1="272.2" y1="18" x2="272.2" y2="200"></line>
+              <line x1="394.4" y1="18" x2="394.4" y2="200"></line>
+              <line x1="516.7" y1="18" x2="516.7" y2="200"></line>
+              <line x1="638.9" y1="18" x2="638.9" y2="200"></line>
+            </g>
+            <line x1="642.6" y1="14" x2="642.6" y2="204" stroke="var(--ink-2)" stroke-width="1.5" stroke-dasharray="4 3"></line>
+            <text x="642.6" y="10" fill="var(--ink-2)" font-family="IBM Plex Mono, monospace" font-size="9.5" text-anchor="end">ceiling 90.3%</text>
+
+            <text x="0" y="32" fill="var(--ink)" font-family="IBM Plex Sans, sans-serif" font-size="11.5" font-weight="600">Low SNR [−10,1) dB</text>
+            <g font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--muted)" text-anchor="end">
+              <text x="144" y="56">trained net</text>
+              <text x="144" y="78">best mask</text>
+              <text x="144" y="100">true deletion</text>
+            </g>
+            <rect x="150" y="44" width="138.1" height="15" fill="var(--fail)"></rect>
+            <rect x="150" y="66" width="281.1" height="15" fill="var(--warn)"></rect>
+            <rect x="150" y="88" width="487.7" height="15" fill="var(--pass)"></rect>
+            <g font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--ink)">
+              <text x="294" y="56">61.3%</text>
+              <text x="437" y="78">73.0%</text>
+              <text x="596" y="100" fill="#fff">89.9%</text>
+            </g>
+
+            <text x="0" y="132" fill="var(--ink)" font-family="IBM Plex Sans, sans-serif" font-size="11.5" font-weight="600">Trained SNR [1,10] dB</text>
+            <g font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--muted)" text-anchor="end">
+              <text x="144" y="156">trained net</text>
+              <text x="144" y="178">best mask</text>
+              <text x="144" y="200">true deletion</text>
+            </g>
+            <rect x="150" y="144" width="455.9" height="15" fill="var(--fail)"></rect>
+            <rect x="150" y="166" width="473.0" height="15" fill="var(--warn)"></rect>
+            <rect x="150" y="188" width="488.9" height="15" fill="var(--pass)"></rect>
+            <g font-family="IBM Plex Mono, monospace" font-size="10" fill="#fff">
+              <text x="564" y="156">87.3%</text>
+              <text x="581" y="178">88.7%</text>
+              <text x="597" y="200">90.0%</text>
+            </g>
+
+            <g stroke="var(--rule-strong)" stroke-width="1"><line x1="150" y1="204" x2="700" y2="204"></line></g>
+            <g fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="9.5" text-anchor="middle">
+              <text x="150" y="218">50%</text><text x="272.2" y="218">60%</text><text x="394.4" y="218">70%</text>
+              <text x="516.7" y="218">80%</text><text x="638.9" y="218">90%</text>
+            </g>
+            <text x="150" y="240" fill="var(--muted)" font-family="IBM Plex Sans, sans-serif" font-size="10.5">Speaker-verification accuracy — axis starts at 50%</text>
+          </svg>
+          <div class="legend">
+            <span><i style="background:var(--fail)"></i>trained Stage 1</span>
+            <span><i style="background:var(--warn)"></i>oracle: best mask within the formulation</span>
+            <span><i style="background:var(--pass)"></i>oracle: true energy deletion</span>
+          </div>
+        </div>
+        <p class="figcap"><b>Figure 5</b> &nbsp;Both gaps open specifically at low SNR. The learnable gap (red&nbsp;&rarr;&nbsp;amber, +11.7&nbsp;pp) says the network falls short of its own formulation's best; the formulation gap (amber&nbsp;&rarr;&nbsp;green, +16.9&nbsp;pp) says the formulation itself is the larger limit there. At trained SNR both collapse to about a point, which is what "saturated" means in §8.</p>
+
+        <h3>The coverage gap, before it was closed</h3>
+        <p>Catastrophic-failure rate on Libri2Mix, bucketed by mixture SNR, measured before the low-SNR campaign. The two shaded buckets are the regime the training mixer structurally could not produce.</p>
+
+        <div class="chartwrap">
+          <svg viewBox="0 0 720 268" role="img" aria-label="Bar chart of catastrophic failure rate by SNR bucket, falling monotonically from 45.1 percent below 0 dB to 0 percent above 7 dB">
+            <g stroke="var(--rule)" stroke-width="1">
+              <line x1="48" y1="20" x2="700" y2="20"></line>
+              <line x1="48" y1="60" x2="700" y2="60"></line>
+              <line x1="48" y1="100" x2="700" y2="100"></line>
+              <line x1="48" y1="140" x2="700" y2="140"></line>
+              <line x1="48" y1="180" x2="700" y2="180"></line>
+            </g>
+            <rect x="48" y="20" width="217" height="200" fill="var(--fail-soft)"></rect>
+            <text x="156" y="36" fill="var(--fail)" font-family="IBM Plex Mono, monospace" font-size="10" text-anchor="middle">never trained here</text>
+
+            <rect x="71" y="39.6" width="62" height="180.4" fill="var(--fail)"></rect>
+            <rect x="180" y="148" width="62" height="72" fill="var(--fail)"></rect>
+            <rect x="288" y="179.6" width="62" height="40.4" fill="var(--accent)"></rect>
+            <rect x="397" y="209.2" width="62" height="10.8" fill="var(--accent)"></rect>
+            <rect x="506" y="216.8" width="62" height="3.2" fill="var(--accent)"></rect>
+            <rect x="615" y="218.5" width="62" height="1.5" fill="var(--accent)"></rect>
+
+            <g font-family="IBM Plex Mono, monospace" font-size="10.5" fill="var(--ink)" text-anchor="middle">
+              <text x="102" y="33">45.1%</text>
+              <text x="211" y="141">18.0%</text>
+              <text x="319" y="173">10.1%</text>
+              <text x="428" y="202">2.7%</text>
+              <text x="537" y="210">0.8%</text>
+              <text x="646" y="212">0.0%</text>
+            </g>
+            <line x1="48" y1="220" x2="700" y2="220" stroke="var(--rule-strong)" stroke-width="1"></line>
+            <g fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="9.5" text-anchor="middle">
+              <text x="102" y="236">&lt;0 dB</text><text x="211" y="236">0–1</text><text x="319" y="236">1–3</text>
+              <text x="428" y="236">3–5</text><text x="537" y="236">5–7</text><text x="646" y="236">7–10+</text>
+            </g>
+            <g fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="9.5" text-anchor="end">
+              <text x="42" y="24">50%</text><text x="42" y="64">40%</text><text x="42" y="104">30%</text>
+              <text x="42" y="144">20%</text><text x="42" y="184">10%</text><text x="42" y="224">0%</text>
+            </g>
+            <text x="48" y="258" fill="var(--muted)" font-family="IBM Plex Sans, sans-serif" font-size="10.5">Catastrophic rate by mixture SNR — Libri2Mix, n=6000, pre-campaign</text>
+          </svg>
+        </div>
+        <p class="figcap"><b>Figure 6</b> &nbsp;A smooth monotonic trend, not a cliff — which is what identified this as a <em>training-coverage</em> gap rather than an architectural failure. The system degrades exactly in proportion to how far the mixture sits outside the SNR range it was trained on.</p>
+
+        <h3>What the campaign bought</h3>
+        <div class="chartwrap">
+          <svg viewBox="0 0 720 150" role="img" aria-label="Diverging bar chart showing low-SNR SI-SDR moving from minus 15.86 dB before the campaign to plus 6.51 dB after">
+            <g stroke="var(--rule)" stroke-width="1">
+              <line x1="60" y1="24" x2="60" y2="104"></line>
+              <line x1="166.7" y1="24" x2="166.7" y2="104"></line>
+              <line x1="273.3" y1="24" x2="273.3" y2="104"></line>
+              <line x1="380" y1="24" x2="380" y2="104"></line>
+              <line x1="593.3" y1="24" x2="593.3" y2="104"></line>
+              <line x1="700" y1="24" x2="700" y2="104"></line>
+            </g>
+            <rect x="148.3" y="32" width="338.4" height="22" fill="var(--fail)"></rect>
+            <rect x="486.7" y="72" width="138.8" height="22" fill="var(--pass)"></rect>
+            <line x1="486.7" y1="20" x2="486.7" y2="108" stroke="var(--ink)" stroke-width="1.5"></line>
+            <g font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--ink)">
+              <text x="155" y="47" fill="#fff">−15.86 dB</text>
+              <text x="632" y="87">+6.51 dB</text>
+            </g>
+            <g font-family="IBM Plex Sans, sans-serif" font-size="11" fill="var(--ink-2)" text-anchor="end">
+              <text x="142" y="47">before</text>
+            </g>
+            <g font-family="IBM Plex Sans, sans-serif" font-size="11" fill="var(--ink-2)" text-anchor="end">
+              <text x="480" y="87">after</text>
+            </g>
+            <g fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="9.5" text-anchor="middle">
+              <text x="60" y="122">−20</text><text x="166.7" y="122">−15</text><text x="273.3" y="122">−10</text>
+              <text x="380" y="122">−5</text><text x="486.7" y="122">0</text><text x="593.3" y="122">+5</text><text x="700" y="122">+10</text>
+            </g>
+            <text x="60" y="142" fill="var(--muted)" font-family="IBM Plex Sans, sans-serif" font-size="10.5">SI-SDR vs unprocessed mixture, dB — low SNR [−20,1) dB region</text>
+          </svg>
+        </div>
+        <p class="figcap"><b>Figure 7</b> &nbsp;The single largest movement in the project: a 22&nbsp;dB swing across the zero line. Left of zero means the extractor was making the audio <em>worse than not running it</em>.</p>
+
+        <h3>Cross-corpus validation</h3>
+        <p>Libri2Mix is generated by an independent toolchain with no SNR floor, so 60.6% of its <code>mix_clean</code> samples place the target <em>below</em> the interferer — a regime this project's mixer structurally cannot produce. Splitting on that boundary separates a generalization question from a coverage question.</p>
+        <div class="tscroll">
+          <table>
+            <caption>Libri2Mix, n=6000, split at the trained SNR floor</caption>
+            <thead><tr><th>Slice</th><th class="num">Share</th><th class="num">Median mel S2 vs S1</th><th class="num">Catastrophic</th><th class="num">SI-SDR vs S1</th></tr></thead>
+            <tbody>
+              <tr class="hl"><td>In-distribution (≥1 dB)</td><td class="num">39.4%</td><td class="num">73.4%</td><td class="num">5.7%</td><td class="num">+2.37 dB</td></tr>
+              <tr><td>Out-of-distribution (&lt;1 dB)</td><td class="num">60.6%</td><td class="num">−19.0%</td><td class="num">40.3%</td><td class="num">−1.50 dB</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>The in-distribution slice (73.4% / 5.7%) is consistent with — and on SI-SDR better than — the in-house headline of 77.7% / 3.5%, on a corpus this project did not build. That is the evidence that the gains are real and not a property of the in-house mixer. The out-of-distribution slice is what motivated the low-SNR campaign, and was subsequently improved to +11.2% mel and 28.2% catastrophic.</p>
+      </section>
+
+      <!-- 6b -->
+      <section id="s6b">
+        <h2 class="sec"><span class="n">06b</span>Processes run</h2>
+        <p>Every repeatable procedure in the project — what it does, why it exists, and what it produced. These are the building blocks the decision log in §7 is assembled from.</p>
+
+        <h4>Training procedures</h4>
+
+        <div class="proc">
+          <h3>Stage 1 training</h3>
+          <p class="cmd">training/train_mask.py — 200k steps, ~47 h</p>
+          <dl>
+            <dt>Why</dt><dd>Produce the masking network that gives Stage 2 a cleaner starting point than the raw mixture. Runs first because Stage 2 trains against its frozen output.</dd>
+            <dt>Result</dt><dd>Converged at step 130,000; that checkpoint served the whole project until the low-SNR fine-tune replaced it on 2026-09-12 — the first Stage 1 change in six weeks.</dd>
+          </dl>
+        </div>
+
+        <div class="proc">
+          <h3>Stage 2 training</h3>
+          <p class="cmd">training/train_flow.py — 300k steps</p>
+          <dl>
+            <dt>Why</dt><dd>Learn the rectified-flow velocity field that carries Stage 1's output toward the clean target, conditioned on the speaker vector.</dd>
+            <dt>Result</dt><dd>The base checkpoint behind every later fine-tune. Trained on <em>frozen</em> Stage 1 output, which is what makes the two stages co-adapted — the property behind the §7&nbsp;N and §9.4 findings.</dd>
+          </dl>
+        </div>
+
+        <div class="proc">
+          <h3>Vocoder training</h3>
+          <p class="cmd">vocoder_train/ — HiFi-GAN from scratch, 170k steps</p>
+          <dl>
+            <dt>Why</dt><dd>This project's mel configuration (80 mels, hop 160, Whisper-aligned) is not compatible with any standard pre-trained vocoder, so one had to be trained on the project's own representation.</dd>
+            <dt>Result</dt><dd>Frozen since 2026-08-20 and used for every audio-domain measurement since. Also, as §8 shows, one of the two components that bound the 90.3% ceiling.</dd>
+          </dl>
+        </div>
+
+        <div class="proc">
+          <h3>Speaker projection training</h3>
+          <p class="cmd">30k steps — 393,728 trainable parameters on a frozen WavLM</p>
+          <dl>
+            <dt>Why</dt><dd>Map WavLM's output into the 512-d conditioning space both stages consume. Keeping WavLM frozen holds the parameter cost to a third of a million.</dd>
+            <dt>Result</dt><dd>Serves both roles — extraction conditioning <em>and</em> the reference embedding for the accuracy metric. §7&nbsp;Q shows why that dual role makes the metric sensitive to changes here.</dd>
+          </dl>
+        </div>
+
+        <div class="proc">
+          <h3>Curriculum fine-tuning</h3>
+          <p class="cmd">25k steps from a promoted checkpoint, ~13 h</p>
+          <dl>
+            <dt>Why</dt><dd>Test a hypothesis about training coverage without a full retrain. Only the sampling curriculum changes, so any measured difference is attributable to it.</dd>
+            <dt>Result</dt><dd>Six fine-tunes in Phase One: hard-t0, hard-multispeaker, 50% and 25% low-SNR, Stage-1 low-SNR, Stage-2 adaptation, log-gain pair, onset. Three promoted, five rejected.</dd>
+          </dl>
+        </div>
+
+        <h4>Evaluation procedures</h4>
+
+        <div class="proc">
+          <h3>The promotion battery</h3>
+          <p class="cmd">scripts/run_eval_candidate_gpu.sh &lt;ckpt&gt; &lt;tag&gt; [mask] [cfg] [pad] [warmup] — ~2 h</p>
+          <dl>
+            <dt>Why</dt><dd>One generic evaluator for any candidate, so each experiment does not need a near-duplicate script and every candidate is judged on identical ground. Outputs are tagged, so results never collide with the canonical files the docs cite.</dd>
+            <dt>Result</dt><dd>Ran for all fifteen candidates. Stage ordering puts the decisive test first so a bad candidate can be cancelled without spending the full two hours.</dd>
+          </dl>
+        </div>
+
+        <div class="proc">
+          <h3>Cheap pre-screen</h3>
+          <p class="cmd">scripts/run_diag_gate_candidate_gpu.sh — ~25 min</p>
+          <dl>
+            <dt>Why</dt><dd>The onset gate is invisible to every battery metric, so a candidate can pass the full battery and still sound wrong. This measures only the gate.</dd>
+            <dt>Result</dt><dd>Rejected the onset fine-tune for 25 minutes of GPU instead of two hours.</dd>
+          </dl>
+        </div>
+
+        <div class="proc">
+          <h3>Libri2Mix generation and evaluation</h3>
+          <p class="cmd">scripts/generate_libri2mix_test.sh then eval/eval_libri2mix.py — n=6000</p>
+          <dl>
+            <dt>Why</dt><dd>Every in-house number comes from one mixer. An independently built corpus tests whether the results are properties of the system or of the data pipeline.</dd>
+            <dt>Result</dt><dd>Confirmed the hard-t0 fix generalizes, and surfaced the sub-1&nbsp;dB coverage gap that drove the whole low-SNR campaign. Also the first real exercise of the variable-length chunked inference path, since Libri2Mix mixtures are not a fixed 10&nbsp;s.</dd>
+          </dl>
+        </div>
+
+        <div class="proc">
+          <h3>Oracle Stage 1 substitution</h3>
+          <p class="cmd">eval/eval_multi_speaker.py --stage1_mode oracle_logmask | oracle_energy</p>
+          <dl>
+            <dt>Why</dt><dd>Answer "is Stage 1 the bottleneck?" without training anything. Two oracles separate a <em>learnable</em> shortfall from a <em>formulation</em> limit, which have opposite remedies.</dd>
+            <dt>Result</dt><dd>Figure 5. Established that both gaps are real, both open at low SNR, and — critically — that the system is near-saturated at trained SNR. This is the measurement that redirected Phase Two.</dd>
+          </dl>
+        </div>
+
+        <div class="proc">
+          <h3>Onset diagnostics</h3>
+          <p class="cmd">eval/diag_onset_padding.py — padding, splice, cfg and checkpoint sweeps</p>
+          <dl>
+            <dt>Why</dt><dd>A defect reported by ear needed to be made measurable before it could be attacked. The measure is output level versus ground truth over the first 0.5&nbsp;s of speech.</dd>
+            <dt>Result</dt><dd>Localized it to sequence position 0 (interior onsets are clean at +0.29&nbsp;dB), ruled out the operating point, and then the 2×2 checkpoint ablation proved it is an interaction between the two promotions.</dd>
+          </dl>
+        </div>
+
+        <div class="proc">
+          <h3>Listening export</h3>
+          <p class="cmd">eval/export_listening_samples.py — playable wav across 2/3/4 speakers</p>
+          <dl>
+            <dt>Why</dt><dd>No aggregate metric guarantees the output sounds like the target speaker. A human check is the only test of that.</dd>
+            <dt>Result</dt><dd>Ran twice. The first pass confirmed extraction sounds correct and found a trailing-silence bug that had been <em>understating</em> the numbers. The second pass found the onset gate — a defect no metric in the battery could see.</dd>
+          </dl>
+        </div>
+
+        <h4>Operational procedures</h4>
+
+        <div class="proc">
+          <h3>Checkpoint promotion</h3>
+          <p class="cmd">back up the outgoing file, copy in, verify both by MD5</p>
+          <dl>
+            <dt>Why</dt><dd>There is no central config field for checkpoint paths — thirteen scripts name <code>flow_best.pt</code> as an argparse default. "Promoting" therefore means physically replacing a file, which is irreversible without a backup.</dd>
+            <dt>Result</dt><dd>Four promotions, each with a verified backup retained. Every superseded checkpoint is still recoverable.</dd>
+          </dl>
+        </div>
+
+        <div class="proc">
+          <h3>Pre-registered decision rules</h3>
+          <p class="cmd">written into the project record before results are seen</p>
+          <dl>
+            <dt>Why</dt><dd>With this many candidates and this many metrics, there is always some cut on which a change looks good. Fixing the target and the retention bars in advance removes that freedom.</dd>
+            <dt>Result</dt><dd>Applied to every candidate from the low-SNR campaign onward. Eleven rejections, of which several would plausibly have been talked into a promotion after the fact. One deliberate override, reported in §7&nbsp;K.</dd>
+          </dl>
+        </div>
+      </section>
+
+      <!-- 7 -->
+      <section id="s7">
+        <h2 class="sec"><span class="n">07</span>Decision log</h2>
+        <p>Every change evaluated in Phase One, in order, with the reason it was attempted and the reason for its verdict. Eleven of fifteen were rejected; the rejections carry most of the information.</p>
+
+        <div class="log">
+
+          <div class="entry">
+            <div class="rail"><span class="job">10555</span>08-22</div>
+            <div>
+              <h3>Safety-net fallback <span class="chip fail">Rejected</span></h3>
+              <p>A per-frame energy-collapse detector that fell back to Stage 1 output when Stage 2 appeared to fail, intended to remove catastrophic outliers.</p>
+              <p>It removed them — and collapsed the median from 75.8% to 46.6%, because it triggered on roughly 16% of all frames, not just the failing ones. It also did nothing for speaker similarity.</p>
+              <div class="why"><b>Reason for rejection</b>A fix that fires far outside the failure it targets is not a fix; it trades a small tail for a large median.</div>
+            </div>
+          </div>
+
+          <div class="entry">
+            <div class="rail"><span class="job">10606</span>08-28</div>
+            <div>
+              <h3>Hard-t0 fine-tune <span class="chip pass">Promoted</span></h3>
+              <p>Diagnosis first: for the catastrophic samples, ‖v_cond − v_uncond‖ at t=0 ran 5–40&times; its magnitude at any later step. At t=0 the input equals Stage 1's output exactly, so the velocity field must extrapolate the whole trajectory from one frozen point, and guidance amplifies that disagreement into an oversized first Euler step the remaining steps cannot correct.</p>
+              <p>Fine-tuning with over-weighted t≈0 sampling cut the catastrophic rate <strong>12.7% &rarr; 3.5%</strong>, improved median mel 67.3% &rarr; 77.7%, and SI-SDR +0.93 &rarr; +1.58&nbsp;dB — improving in every SNR bucket.</p>
+              <div class="why"><b>Reason for promotion</b>The improvement appeared where the diagnosis predicted it, not merely in an aggregate insensitive to outliers.</div>
+            </div>
+          </div>
+
+          <div class="entry">
+            <div class="rail"><span class="job">10875</span>09-03</div>
+            <div>
+              <h3>Hard-multispeaker fine-tune <span class="chip pass">Promoted</span></h3>
+              <p>The model had only ever trained on 2-speaker mixtures; 3- and 4-speaker were entirely out of distribution, scoring 76.7% and 72.6%.</p>
+              <p>A 0.5 / 0.3 / 0.2 speaker-count curriculum lifted these to <strong>81.9% and 76.7%</strong> while 2-speaker held flat — gains concentrated exactly where coverage had been missing.</p>
+              <div class="why"><b>Reason for promotion</b>Large gains in the targeted condition, no regression in the validated one.</div>
+            </div>
+          </div>
+
+          <div class="entry">
+            <div class="rail"><span class="job">11032</span>09-10</div>
+            <div>
+              <h3>50% low-SNR curriculum, Stage 2 <span class="chip fail">Rejected</span></h3>
+              <p>Target regime won decisively: low-SNR accuracy 61.3% &rarr; 71.3%, SI-SDR −5.94 &rarr; +4.11&nbsp;dB.</p>
+              <p>But corpus-wide accuracy fell 86.5% &rarr; 82.0% and the in-domain catastrophic rate rose 3.7% &rarr; <strong>15.5%</strong> — a 4.2&times; increase. Per-bucket analysis showed genuine capacity reallocation, not noise.</p>
+              <div class="why"><b>Reason for rejection</b>The cost was not confined to the diagnostic metric, unlike the two prior fine-tunes.</div>
+            </div>
+          </div>
+
+          <div class="entry">
+            <div class="rail"><span class="job">11054</span>09-11</div>
+            <div>
+              <h3>25% low-SNR curriculum, Stage 2 <span class="chip fail">Rejected</span></h3>
+              <p>Run specifically to test whether a gentler curriculum found a sweet spot. It did not: it kept 38–76% of the 50% run's gain and 62–73% of its cost — roughly proportional, no knee in the curve.</p>
+              <div class="why"><b>Reason for rejection</b>Two clean failed retention bars, and the pair of runs established the trade as <em>inherent at Stage 2</em>. Curriculum-weight tuning was stopped here rather than continued.</div>
+            </div>
+          </div>
+
+          <div class="entry">
+            <div class="rail"><span class="job">11075</span>09-11</div>
+            <div>
+              <h3>Oracle decomposition <span class="chip warn">Diagnostic</span></h3>
+              <p>Not a candidate — an experiment to find where the ceiling lives. Stage 1 was replaced by two oracles built from the clean target: the best mask possible <em>within</em> the paper's formulation, and true energy deletion.</p>
+              <div class="tscroll" style="margin-top:10px">
+                <table>
+                  <caption>Accuracy by Stage 1 substitute</caption>
+                  <thead><tr><th>Stage 1 input</th><th class="num">Low SNR</th><th class="num">Trained SNR</th></tr></thead>
+                  <tbody>
+                    <tr><td>Trained network</td><td class="num">61.3%</td><td class="num">87.3%</td></tr>
+                    <tr><td>Oracle — best mask in formulation</td><td class="num">73.0%</td><td class="num">88.7%</td></tr>
+                    <tr><td>Oracle — true energy deletion</td><td class="num">89.9%</td><td class="num">90.0%</td></tr>
+                    <tr><td>Ceiling (clean target)</td><td class="num">90.3%</td><td class="num">90.3%</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="why"><b>What it established</b>Both a learnable gap (+11.7 pp) and a formulation gap (+16.9 pp) are real, and both open specifically at low SNR. It also fixed the headroom estimate used throughout §8.</div>
+            </div>
+          </div>
+
+          <div class="entry">
+            <div class="rail"><span class="job">11082</span>09-12</div>
+            <div>
+              <h3>Log-gain Stage 1, frozen Stage 2 <span class="chip fail">Rejected</span></h3>
+              <p>Replacing <code>x·M</code> with <code>x + logsigmoid(·)</code> makes deletion genuinely achievable and produced <strong>the most accurate Stage 1 ever measured here</strong> — mel MSE 2.296 against 5.939 for the multiplicative arm.</p>
+              <p>The frozen Stage 2 then destroyed it, worsening its input in 97.7–98.7% of samples.</p>
+              <div class="why"><b>Reason for rejection</b>Stage 2 had never seen mask output <em>below</em> the mixture. A better Stage 1 is worthless to a Stage 2 that was not trained against it.</div>
+            </div>
+          </div>
+
+          <div class="entry">
+            <div class="rail"><span class="job">11081</span>09-12</div>
+            <div>
+              <h3>Stage 1 low-SNR fine-tune <span class="chip pass">Promoted</span></h3>
+              <p>Same curriculum as the rejected Stage 2 attempts, applied to Stage 1 instead. Low-SNR accuracy 61.3% &rarr; <strong>69.7%</strong> at no corpus-wide cost (86.5% &rarr; 86.5%), where the equivalent Stage 2 change had cost 4.5&nbsp;pp.</p>
+              <p>Speaker-count accuracy fell 2.4 / 2.1 / 1.6&nbsp;pp — inside the ±3&nbsp;pp retention bar fixed before the run.</p>
+              <div class="why"><b>Reason for promotion</b>All four pre-registered bars passed. The decline was budgeted in advance, not discovered afterwards. First Stage 1 promotion since 2026-08-02.</div>
+            </div>
+          </div>
+
+          <div class="entry">
+            <div class="rail"><span class="job">11106</span>09-13</div>
+            <div>
+              <h3>Stage 2 adaptation to the new Stage 1 <span class="chip warn">Promoted with override</span></h3>
+              <p>After the Stage 1 promotion, Stage 2 was <em>subtracting</em> at low SNR (−1.40&nbsp;dB vs Stage 1) because its input distribution had moved. Re-adapting it met the target decisively: S2-vs-S1 −1.40 &rarr; <strong>+1.79&nbsp;dB</strong>, low-SNR accuracy 69.7% &rarr; <strong>78.7%</strong>.</p>
+              <p>But two retention bars failed: in-domain mel catastrophic 4.6% &rarr; 9.7% (bar ≤5%) and Libri2Mix in-distribution 4.9% &rarr; 7.3% (bar ≤6%).</p>
+              <div class="why"><b>Reason for the override</b>Both failing bars were the <em>mel proxy</em>, and the SI-SDR severity check contradicted them: severe audio regressions barely moved (2.1% &rarr; 2.7%), while the share of mel-"catastrophic" cases whose audio was actually fine <em>rose</em> to 64%. Promoted on that evidence, and recorded as an override — moving a bar after seeing results is exactly what pre-registration exists to prevent, so it is reported rather than hidden.</div>
+            </div>
+          </div>
+
+          <div class="entry">
+            <div class="rail"><span class="job">11112</span>09-13</div>
+            <div>
+              <h3>Guidance re-tune, cfg 1.5 &rarr; 2.5 <span class="chip pass">Adopted</span></h3>
+              <p>The deployed guidance scale had been validated when <em>both</em> stages were different models. A sweep found it mis-tuned for the current pipeline.</p>
+              <p>Accuracy rose across the board — 2/3/4-speaker 84.3/78.3/74.9 &rarr; <strong>85.7/80.0/77.0</strong>, corpus-wide 85.2% &rarr; 86.2%, low-SNR 78.7% &rarr; 80.3% — for −0.09&nbsp;dB SI-SDR and +0.5&nbsp;pp catastrophic.</p>
+              <div class="why"><b>Reason for adoption</b>The single largest recovery in the campaign, at <em>zero</em> training cost. Accuracy plateaued at 2.5 while outliers began rising at 3.0, so the sweep was stopped there rather than pushed further.</div>
+            </div>
+          </div>
+
+          <div class="entry">
+            <div class="rail"><span class="job">11164</span>09-14</div>
+            <div>
+              <h3>Log-gain pair, both stages co-adapted <span class="chip fail">Rejected</span></h3>
+              <p>The obvious follow-up to entry&nbsp;I: if the frozen Stage 2 was the problem, adapt it to the log-gain Stage 1. Failed every bar — corpus-wide 83.5% against a required 86.5%.</p>
+              <p>The mechanism is the finding: Stage 2's improvement over Stage 1 collapsed from +74.1% mel to <strong>+11.7%</strong>, and went negative at low SNR. The final output was <em>worse in absolute terms</em> despite Stage 1's error being 2.6&times; lower.</p>
+              <div class="why"><b>What it established</b>Pipeline quality is not a function of Stage 1 accuracy alone. 300k steps of Stage 2 training against multiplicative-mask output cannot be re-pointed at a different input family in 25k, and the residual Stage 2 learned to predict is much smaller when its input is already near the target. Recast entry&nbsp;I's failure as <em>structural</em>, not mere distribution shift.</div>
+            </div>
+          </div>
+
+          <div class="entry">
+            <div class="rail"><span class="job">11184</span>09-15</div>
+            <div>
+              <h3>Onset fine-tune <span class="chip fail">Rejected</span></h3>
+              <p>Targeted at the onset gate found by ear (§9.4). Improved it — 7/24 gated &rarr; 4/24, 2-speaker fully clean — but the bar was ≤1/24, and <strong>4-speaker did not move at all</strong>.</p>
+              <div class="why"><b>Reason for rejection</b>Missed its pre-registered bar. In hindsight the shortfall is explained by the ablation below: it adjusted Stage 2 alone for a defect that lives in the coupling between stages.</div>
+            </div>
+          </div>
+
+          <div class="entry">
+            <div class="rail"><span class="job">11202</span>09-16</div>
+            <div>
+              <h3>Inference-side onset repair <span class="chip fail">Rejected</span></h3>
+              <p>A silent lead-in spliced over the first second, so the weak region falls in frames discarded before vocoding — no retraining required. Implemented opt-in so the disabled path stays bit-identical.</p>
+              <p>Gate 7/24 &rarr; 6/24 (one sample), accuracy unchanged to slightly down, 4-speaker again unmoved.</p>
+              <div class="why"><b>Reason for rejection</b>Two independent mitigations — one retraining, one inference-side — failed in the same condition, which is what the interaction diagnosis predicts.</div>
+            </div>
+          </div>
+
+          <div class="entry">
+            <div class="rail"><span class="job">11210</span>09-17</div>
+            <div>
+              <h3>CFG warm-up <span class="chip fail">Rejected</span></h3>
+              <p>Flagged twice in the project record as the only change that had improved every measured metric with nothing worse (mel −11%, SI-SDR +0.48&nbsp;dB). It had never been measured on accuracy, because only one of five evaluation scripts exposed the flag.</p>
+              <p>Wired through all five and measured: the quality gains <em>replicated</em> at full corpus scale, but accuracy fell in every condition — 4-speaker gave back 2.4&nbsp;pp, the entire gain the guidance re-tune had bought.</p>
+              <div class="why"><b>Reason for rejection</b>Warm-up runs the first two of four steps unguided, so it is simply <em>weaker guidance</em> re-parameterized — time-averaged ≈ cfg 1.75, on an axis already swept and deliberately optimized in the other direction. It reproduced cfg 2.0's accuracy almost exactly. "No metric worse" held only because the diagnostic that surfaced it never measured accuracy.</div>
+            </div>
+          </div>
+
+          <div class="entry">
+            <div class="rail"><span class="job">11216</span>09-18</div>
+            <div>
+              <h3>Longer enrollment, 3.0 s &rarr; 5.0 s <span class="chip fail">Rejected</span></h3>
+              <p>Enrollment length is a strong known lever in TSE and had never been varied — the config key did not exist, so every result in the project had used the hardcoded 3.0&nbsp;s default.</p>
+              <p>Worse across the board. The diagnostic detail: <strong>the ceiling itself fell, 90.3% &rarr; 89.6%</strong>, and the mixture probe moved too.</p>
+              <div class="why"><b>Reason for rejection</b>Those probes depend only on the enrollment embedding, so the loss was not in extraction — a longer window produced a <em>worse speaker reference</em>, and everything downstream followed. This rejects "a longer window on one utterance", not "more enrollment audio"; pooling several utterances remains untested.</div>
+            </div>
+          </div>
+
+          <div class="entry">
+            <div class="rail"><span class="job">11218</span>09-18</div>
+            <div>
+              <h3>Heun ODE solver <span class="chip fail">Rejected</span></h3>
+              <p>Only Euler had ever been used. A 2nd-order solver costs two velocity evaluations per step, so Heun at 2 steps was compared against Euler at 4 — equal compute, the only fair comparison.</p>
+              <p>Worse nearly everywhere, worst at low SNR (−2.6&nbsp;pp).</p>
+              <div class="why"><b>Reason for rejection</b>Stage 2 is trained with a <em>rectified flow</em> objective, which optimizes for straight trajectories — and Euler is exact on a straight line. There was no integration error left to recover, while halving the steps halved the number of CFG applications, which this pipeline is demonstrably sensitive to. A unit test confirms the solver <em>is</em> more accurate on a curved field; the model simply does not produce one.</div>
+            </div>
+          </div>
+
+          <div class="entry">
+            <div class="rail"><span class="job">11220</span>09-18</div>
+            <div>
+              <h3>Alternate speaker projection <span class="chip fail">Rejected</span></h3>
+              <p>Two projection checkpoints existed; every script defaulted to one and the other had never been evaluated. Headline accuracy came back <em>identical</em> at 86.2%.</p>
+              <div class="why"><b>Reason for rejection</b>AUC fell (0.9361 &rarr; 0.9308), and the probes gave it away: the mixture baseline <em>rose</em> while the ceiling <em>fell</em>, narrowing the spread between doing nothing and ground truth from 19.8 to 17.9&nbsp;pp. It is a less discriminative embedding space measuring on a squashed scale, not a better system.</div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- 8 -->
+      <section id="s8">
+        <h2 class="sec"><span class="n">08</span>Ceiling analysis</h2>
+        <p>Late in Phase One the question became: how much room is actually left? The oracle decomposition and the ceiling probe answer it quantitatively.</p>
+
+        <div class="tscroll">
+          <table>
+            <caption>Headroom at the trained operating point, 2 speakers</caption>
+            <thead><tr><th>Configuration</th><th class="num">Accuracy</th><th>Interpretation</th></tr></thead>
+            <tbody>
+              <tr><td>Current system</td><td class="num">85.7%</td><td>deployed</td></tr>
+              <tr><td>With a perfect Stage 1</td><td class="num">90.0%</td><td>oracle energy deletion</td></tr>
+              <tr class="hl"><td>Ceiling — clean target audio</td><td class="num">90.3%</td><td>vocoder + speaker encoder limited</td></tr>
+              <tr><td>Theoretical</td><td class="num">100%</td><td>&mdash;</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout">
+          <p>The ceiling probe passes the <em>ground-truth clean target</em> through the same mel &rarr; HiFi-GAN &rarr; WavLM chain as every other probe. So <strong>90.3% is what perfect extraction of perfectly clean speech scores</strong>. The remaining 9.7&nbsp;pp is lost by the vocoder and speaker encoder before extraction quality is involved at all.</p>
+        </div>
+
+        <p>That splits the remaining headroom into two unequal pools:</p>
+        <ul>
+          <li><strong>Extraction: ~4.6 pp</strong>, and the oracle shows a perfect Stage 1 captures 4.3 of it. Stage 2 and the operating point are effectively <em>saturated</em> at the trained SNR.</li>
+          <li><strong>Measurement chain: ~9.7 pp</strong> — more than twice what remains in the extractor. Improving it would raise the ceiling and the system number together, which is a legitimate finding to report but not the same claim as a better extractor.</li>
+        </ul>
+
+        <div class="callout">
+          <p><strong>This prediction was then tested and held.</strong> Five consecutive inference-side experiments — onset padding, CFG warm-up, longer enrollment, Heun, alternate projection — all failed to move the system. That is not bad luck; it is what a saturated operating point looks like. The analysis directed Phase Two away from inference-time tuning and toward Stage 1 and the measurement chain.</p>
+        </div>
+      </section>
+
+      <!-- 9 -->
+      <section id="s9">
+        <h2 class="sec"><span class="n">09</span>Characterized limitations</h2>
+        <p>Four, each with an established root cause. Two were substantially mitigated, one closed, one remains open.</p>
+
+        <h3>9.1 &nbsp;t≈0 training-coverage gap <span class="chip pass">Mitigated 3.6&times;</span></h3>
+        <p>At t=0 the flow input equals Stage 1's output exactly, giving the velocity field no interpolation signal and forcing it to extrapolate the whole trajectory from one point. Guidance amplifies the resulting disagreement into an oversized first step. Diagnosed by measuring ‖v_cond − v_uncond‖ per step, then fixed by over-weighting t≈0 during fine-tuning: catastrophic rate 12.7% &rarr; 3.5%. Not solved — the worst samples still collapse.</p>
+
+        <h3>9.2 &nbsp;SNR coverage below 1 dB <span class="chip pass">Closed</span></h3>
+        <p>The mixer's <code>snr_min = 1.0</code> floor meant the model had <em>never</em> trained on a mixture where the target is quieter than the interferer — 60.6% of Libri2Mix. In that regime the system was actively harmful: 61.3% accuracy against a 64.0% do-nothing baseline. Closed by the Stage 1 fine-tune plus Stage 2 adaptation plus guidance re-tune: <strong>80.3%</strong>, SI-SDR −15.86 &rarr; +6.51&nbsp;dB.</p>
+
+        <h3>9.3 &nbsp;Speaker-count generalization <span class="chip pass">Mitigated</span></h3>
+        <p>Trained only on 2-speaker mixtures; 3 and 4 speakers were out of distribution. The speaker-count curriculum lifted 4-speaker from 72.6% to 77.0%, where it remains.</p>
+
+        <h3>9.4 &nbsp;Onset gate <span class="chip fail">Open</span></h3>
+        <p>Found by <em>listening</em>, not by any metric. The first ~0.5&nbsp;s of affected utterances sits on a flat ≈−60&nbsp;dB floor and then switches on abruptly — a gate, not gradual damping. Interior onsets after silence are reproduced perfectly (+0.29&nbsp;dB), so it is a <strong>position-0 effect</strong>: frame 0 is the only frame with no left context for the DiT's rotary attention, and Stage 2 generates its output where Stage 1 merely scales the mixture.</p>
+
+        <div class="tscroll">
+          <table>
+            <caption>2&times;2 ablation — which promotion introduced it</caption>
+            <thead><tr><th>Stage 1</th><th>Stage 2</th><th class="num">Gated</th><th class="num">Median onset</th><th class="num">4-spk gated</th></tr></thead>
+            <tbody>
+              <tr><td>old</td><td>old</td><td class="num">1 / 24</td><td class="num">−1.00 dB</td><td class="num">0 / 8</td></tr>
+              <tr><td><strong>new</strong></td><td>old</td><td class="num">1 / 24</td><td class="num">−2.01 dB</td><td class="num">0 / 8</td></tr>
+              <tr><td>old</td><td><strong>new</strong></td><td class="num">2 / 24</td><td class="num">−1.95 dB</td><td class="num">0 / 8</td></tr>
+              <tr class="hl"><td><strong>new</strong></td><td><strong>new</strong></td><td class="num">7 / 24</td><td class="num">−4.67 dB</td><td class="num">3 / 8</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Neither promotion causes it alone — each is indistinguishable from the pre-campaign pipeline. Only the pair gates, and <em>superadditively</em>: summing the individual effects predicts ≈2/24 and −2.96&nbsp;dB against a measured 7/24 and −4.67&nbsp;dB. Every gated 4-speaker sample requires both new checkpoints present.</p>
+        <p>This removes the cheapest remedy — there is no single promotion to revert — and converges with entry&nbsp;N from the opposite direction. Both say the same thing: <strong>in this two-stage design the stages are co-adapted, and neither stage's quality predicts the pipeline's.</strong> Two mitigations were measured against a bar fixed in advance and both failed, both in the 4-speaker condition. Reported as a characterized limitation with an established cause.</p>
+
+        <div class="callout">
+          <p><strong>Why a metric never caught it.</strong> The speaker embedding is mean-pooled over the whole utterance, so half a second of a four-to-ten-second clip barely shifts it. The battery was structurally incapable of seeing this defect — which is the argument for keeping a listening test in the loop regardless of how comprehensive the quantitative suite looks.</p>
+        </div>
+      </section>
+
+      <!-- 10 -->
+      <section id="s10">
+        <h2 class="sec"><span class="n">10</span>Engineering record</h2>
+        <p>Defects found and fixed during Phase One. Several would have silently corrupted results rather than produced errors, which is the reason they are worth reporting.</p>
+
+        <div class="tscroll">
+          <table>
+            <caption>Defects, and what each would have cost</caption>
+            <thead><tr><th>Defect</th><th>Effect if unfixed</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>Padding dilution</strong> — enrollment clips shorter than 3.0&nbsp;s were zero-padded before mean-pooled embedding</td>
+                <td>Diluted every speaker vector. Fixing it moved 2/3/4-speaker accuracy +0.6/+0.2/+0.3&nbsp;pp — a <em>measurement</em> correction, not a model change, and it re-based every subsequent comparison.</td>
+              </tr>
+              <tr>
+                <td><strong>Unseeded speaker projection</strong></td>
+                <td>Non-reproducible conditioning between runs.</td>
+              </tr>
+              <tr>
+                <td><strong>Upstream LibriMix bug</strong> — <code>write_noise()</code> called unconditionally even for <code>mix_clean</code>, writing into a directory never created</td>
+                <td>Every generation worker crashed. Patched in the vendored copy with a dated comment so it is not mistaken for upstream behaviour.</td>
+              </tr>
+              <tr>
+                <td><strong>Metadata path level</strong> — LibriMix writes metadata as a <em>sibling</em> of the split directory, not inside it</td>
+                <td>Three eval jobs failed at the last step after full GPU allocation and checkpoint loading.</td>
+              </tr>
+              <tr>
+                <td><strong>Missing training data</strong> — config listed three LibriSpeech splits; only one was ever on disk</td>
+                <td>Every checkpoint trained on ~100 h instead of ~960 h, with no error. Found only by checking the filesystem against the config.</td>
+              </tr>
+              <tr>
+                <td><strong>RIR contamination</strong> — OpenSLR resource 28 ships 843 noise recordings alongside the impulse responses</td>
+                <td>The loader globs recursively, so ~2% of the reverb pool would have been noise clips convolved as impulse responses. Caught before any training used it; the config now points at the RIR-only subtree.</td>
+              </tr>
+              <tr>
+                <td><strong>Silent download failure</strong> — the downloader printed one error line and continued</td>
+                <td>A 13&nbsp;MB log ended in "Download complete!" with a split missing. Now collects failures and exits non-zero.</td>
+              </tr>
+              <tr>
+                <td><strong>Dead code that always crashed</strong> — summing human-readable size strings</td>
+                <td>The downloader's main path had never successfully run; the data on disk had been fetched another way.</td>
+              </tr>
+              <tr>
+                <td><strong>Partial-extraction trap</strong> — every existence check treated a split directory as complete</td>
+                <td>The sharpest one. An interrupted extraction left <strong>83,232 of 104,014 files — 80% complete</strong>. Because <code>tar</code> extracts sequentially by path, the missing fifth was <em>whole speaker directories</em>, which for a speaker-conditioned task is far worse than scattered losses. Now verified by file count against a per-split table.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>A recurring lesson</h3>
+        <div class="callout">
+          <p>Three separate times, a change that improved every metric under observation turned out not to be free: the mel/SI-SDR divergence at low SNR, the log-gain result where a 2.6&times; better Stage 1 produced a worse pipeline, and CFG warm-up, which improved every quality metric while costing accuracy on an axis nobody had measured.</p>
+          <p><strong>A change that improves every metric you happen to be looking at has not been shown to be free.</strong> The useful habit is to ask which axis the current diagnostic cannot see, and measure that one before believing the result.</p>
+        </div>
+      </section>
+
+      <!-- 11 -->
+      <section id="s11">
+        <h2 class="sec"><span class="n">11</span>Infrastructure</h2>
+        <p>A material fraction of Phase One's elapsed time went to cluster faults rather than experiments. Recorded because they shaped the schedule and because the diagnostic habits they forced are reusable.</p>
+
+        <div class="tscroll">
+          <table>
+            <caption>Infrastructure failures encountered</caption>
+            <thead><tr><th>Fault</th><th>Diagnosis and response</th></tr></thead>
+            <tbody>
+              <tr><td>SLURM auth daemon died mid-job</td><td><code>munge.socket.2</code> vanished during extraction, killing the job. Cluster-level; the job scripts were made idempotent so a resubmit resumes rather than restarts.</td></tr>
+              <tr><td>GPU occupied by a foreign process</td><td>14,994&nbsp;MiB of a 16,384&nbsp;MiB P100 held by another process. Per-sample time degraded from 5.5&nbsp;s to <strong>76.8&nbsp;s</strong> — a 14&times; slowdown — and a 5-minute stage took 347 minutes. Visible only because the launcher prints <code>nvidia-smi</code> at job start.</td></tr>
+              <tr><td>HuggingFace fetch hung</td><td>Two jobs burned their entire time limit retrying a model-config request. Fixed by forcing offline mode; the weights were always in the node cache.</td></tr>
+              <tr><td>Filesystem full</td><td>A 15.5-hour training run died at step 21,874 with <code>ENOSPC</code>. The shared volume also swung 161&nbsp;GB &rarr; 38&nbsp;GB overnight through other users' activity.</td></tr>
+              <tr><td>NFS write failures</td><td>Extraction of a checksum-verified archive failed twice with <code>Input/output error</code> and partial writes, with 450&nbsp;GB+ free. A storage-layer fault, not capacity — unresolved and referred onward.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Two practices came out of this and are now standard in every job script: <strong>print the environment diagnostics before doing work</strong> (GPU state, disk, resolved interpreter), because the GPU contention was invisible without it; and <strong>make every long job idempotent and verify completeness by count, not existence</strong>, because three separate failures left partially-complete artifacts that downstream checks would have accepted.</p>
+      </section>
+
+      <!-- 12 -->
+      <section id="s12">
+        <h2 class="sec"><span class="n">12</span>Phase Two</h2>
+        <p>Phase One ends with the extraction side saturated at its trained operating point and the remaining headroom precisely located. Phase Two follows that analysis rather than continuing to tune inference.</p>
+
+        <h3>Carried forward</h3>
+        <div class="tscroll">
+          <table>
+            <caption>Planned work, in dependency order</caption>
+            <thead><tr><th>Step</th><th>Rationale</th><th>Cost</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>1. Stage 1 retrain on expanded data</strong></td>
+                <td>Training data went from ~100 h / 251 speakers to <strong>~600 h / ~1,417 speakers</strong> during Phase One. For a speaker-conditioned task the 5.6&times; increase in <em>speaker</em> count is the more relevant axis. The oracle says all remaining extraction headroom is here.</td>
+                <td class="num">~47 h</td>
+              </tr>
+              <tr>
+                <td><strong>2. Stage 2 adaptation</strong></td>
+                <td>Mandatory, not optional — the log-gain result proved a better Stage 1 alone makes the pipeline <em>worse</em> if Stage 2 is not co-adapted to its output.</td>
+                <td class="num">~13 h</td>
+              </tr>
+              <tr>
+                <td><strong>3. Measurement chain</strong></td>
+                <td>The larger pool at ~9.7 pp: the from-scratch vocoder and the frozen speaker encoder, which together bound every number in this report.</td>
+                <td class="num">1–2 d</td>
+              </tr>
+              <tr>
+                <td><strong>4. Multi-utterance enrollment</strong></td>
+                <td>Phase One rejected a longer window on <em>one</em> utterance. Pooling d-vectors across several utterances adds real speech rather than asking one clip for more than it has — untested, and inference-only.</td>
+                <td class="num">hours</td>
+              </tr>
+              <tr>
+                <td><strong>5. Onset gate</strong></td>
+                <td>Two mitigations failed. The remaining avenue is co-adapting both stages or weighting the loss toward the failing frames — the only class of fix consistent with an interaction defect.</td>
+                <td class="num">4–13 h/attempt</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Open at the boundary</h3>
+        <ul>
+          <li><code>train-clean-360</code> is downloaded and checksum-verified, but extraction is blocked by the NFS write faults in §11. It would add 360 h of clean speech on top of the 600 h already in place — a smaller increment than the first expansion, so it is not a blocker for step&nbsp;1.</li>
+          <li>The <code>cfg_warmup_steps</code> plumbing, the ODE solver, and the onset-splice implementation all remain in the codebase, inert by default and covered by unit tests, so any future checkpoint can be re-tested against them in a single command.</li>
+        </ul>
+
+        <div class="callout">
+          <p><strong>What Phase One establishes for Phase Two.</strong> A working system with validated numbers on two corpora; a quantified ceiling that says where effort will and will not pay; four characterized limitations with root causes; and a decision-log discipline that has already caught five changes which looked like improvements and were not.</p>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <footer>
+    <p>Mask2Flow-TSE — M.Tech project report, Phase One. Reproduction of Moon et al., arXiv:2603.12837, implemented from the paper text without reference code.</p>
+    <p>All figures in this report are measured values from the evaluation battery; each is traceable to a numbered SLURM job in the project record. Metrics: SI-SDR in dB, median unless stated; accuracy = 1 − EER over genuine/impostor trials; catastrophic = mel regression worse than −30% versus Stage 1.</p>
+  </footer>
+</div>

@@ -978,13 +978,345 @@ at its original 77.0% with 2- and 3-speaker within about two points. Stated plai
 measurable in-domain regression bought competence in a regime the system had previously handled worse
 than not running at all.
 
+**30. The formulation change retrained end to end, and rejected: a better Stage 1 is not enough
+(2026-09-14).** Entry 22 rejected `log_gain` because the frozen Stage 2 destroyed its output, and
+entry 25 then removed that objection by showing Stage 2 adapts to a changed Stage 1. So Stage 2 was
+fine-tuned on the log_gain Stage 1's outputs with the identical recipe (job 11137, 25,000 steps,
+12.80h) and the pair evaluated (job 11164). The target, fixed before the run, was every accuracy at or
+above the pre-campaign best while keeping the low-SNR gain:
+
+| Bar | Required | log_gain pair | Current system |
+|---|---|---|---|
+| Corpus-wide accuracy | ≥ 86.5% | 83.5% | 86.2% |
+| 2 / 3 / 4-speaker accuracy | ≥ 87.3 / 82.1 / 77.0% | 82.7 / 80.0 / 76.0% | 85.7 / 80.0 / 77.0% |
+| Low-SNR accuracy | ≥ 80.3% | 77.3% | 80.3% |
+| In-domain SI-SDR vs mixture | ≥ +1.75 dB | +1.15 dB | +1.75 dB |
+
+It fails every bar and is worse than the current system on every metric, so nothing was promoted.
+
+**Why it failed is more informative than that it failed.** Stage 2 contributes almost nothing when fed
+log_gain input. Its improvement over Stage 1 collapses from +74.1% mel and +1.49 dB in the current
+pairing (two speakers) to +11.7% and +0.34 dB, and at low SNR it turns negative, −16.2% and −0.12 dB.
+The consequence is that the final output is worse in absolute terms despite starting from a Stage 1
+whose error is 2.6 times lower — roughly 2.0 mel MSE against the current pipeline's ~1.54. The
+validation proxy had already hinted at this: the run began at 3.2679 and plateaued near 1.39, against
+1.0764 for the multiplicative pairing on the same validation set.
+
+The reading is that **pipeline quality is not a function of Stage 1's accuracy alone**. Stage 2's
+generative correction supplies a large share of it, and handing Stage 2 an easier input reduced what it
+contributed rather than raising the ceiling. The two stages are co-adapted: 300,000 steps of Stage-2
+training against multiplicative-mask outputs cannot be re-pointed at a different input family in
+25,000, and the residual Stage 2 learned to predict (Y − X_enh) is much smaller when X_enh already sits
+close to Y. That also recasts entry 22's failure as something deeper than distribution shift. The
+contingency of another 25,000 steps was not taken: the shortfalls are 2.7 to 4.6 accuracy points and
+the mechanism is structural rather than a matter of convergence.
+
+For the thesis this is a clean result rather than a dead end. Entry 20's formulation gap moves from
+"reachable but untested" to "reachable at Stage 1 and measured as not adoptable within this two-stage
+design" — and it supplies direct evidence that the paper's own architecture choice, a coarse mask
+refined generatively, is doing real work rather than being an arbitrary decomposition.
+
+**31. Listening found a defect every metric had missed: the first half-second is damped
+(2026-09-14).** The listening samples exported in entry 29 were actually listened to, and the report
+was specific: the 4-speaker extractions sound suppressed, "damped especially at the start", with
+3-speaker sample_03 the one bad case in an otherwise clean set. This is worth recording carefully,
+because it is the only defect in the project found by ear first and because the metrics did not
+merely under-weight it — they did not register it at all.
+
+Measuring frame energy against the ground truth reproduced the report exactly. Taking the median
+level of the extraction over the target's active frames, every sample called damped sits 10–14 dB
+low in its first second and recovers afterwards; every sample called clean sits within 1 dB
+throughout. 3-speaker sample_03, the single flagged case in its condition, is −12.6 dB in its first
+second and +0.9 dB after it. Agreement between an untrained ear and a frame-level measurement this
+close means the defect is real and not an artifact of either.
+
+The useful part was separating *where* it happens from *what* it happens on. Speech onsets after a
+pause are acoustically the same event as an utterance's first word, so if the model simply handled
+onsets badly, interior ones would suffer too. Pooled over all twelve samples:
+
+| region | level vs ground truth |
+|---|---|
+| first speech burst (begins at frame 0) | **−4.08 dB** (worst −16) |
+| interior speech onsets, after ≥0.2 s silence | +0.29 dB |
+| sustained speech | +0.01 dB |
+
+Interior onsets are reproduced perfectly. The defect is attached to **position 0 of the sequence**,
+not to acoustic onset. Stage 1 is flat (~0 dB, occasionally positive) across the same frames, so it
+is introduced by Stage 2 — consistent with the two stages' different jobs: Stage 1 multiplies the
+mixture and therefore inherits a plausible level even where its mask is wrong, whereas Stage 2
+*generates* the mel from noise, so a weak prior shows up directly as lost energy. Stage 2's DiT
+attends with RoPE, i.e. relative positions, which makes frame 0 the only frame in the sequence with
+no left context at all.
+
+Why no metric caught it: the damage is roughly 0.5 s of a 10 s utterance. Mel-MSE and SI-SDR average
+over the whole utterance, so a 12 dB hole in 5% of the frames moves them by a fraction of their own
+run-to-run spread, and speaker-verification accuracy is if anything insensitive to it — the speaker
+identity in the remaining 9.5 s is unaffected. The lesson is not that the metrics are wrong but that
+all three are utterance-averaged, and an utterance-averaged metric cannot see a short defect at a
+fixed position no matter how audible it is.
+
+The hypothesis is cheap to test and, if right, cheap to fix: prepend silence to the Stage-1 mel
+before Stage 2 and discard those frames afterwards, so the real frame 0 is given left context and the
+weak region falls in padding that is thrown away. `eval/diag_onset_padding.py` with
+`scripts/run_diag_onset_padding_gpu.sh` runs the flagged samples plus unheard ones at four padding
+lengths, and runs zero-padding twice under different flow-noise seeds so the noise floor is visible
+in the same table — a padding effect only counts if it clears that gap. The pre-registered rule
+before looking: adopt only if the onset damping is removed *and* neither SI-SDR nor mel-MSE degrades,
+since the change would touch every inference path and would require re-validating the headline with
+`run_eval_candidate_gpu.sh` before any documented number is restated. If it trades whole-utterance
+quality for onset quality, it is a characterized limitation rather than a fix.
+
+**32. The onset defect is a gate, and it is a regression the campaign introduced (2026-09-14).**
+Entry 31's hypothesis — that frame 0 suffers because RoPE leaves it without left context — was
+tested and rejected, and the investigation turned up something more consequential.
+
+*Padding does not fix it (jobs 11174, 11175).* Prepending silence to the Stage-1 mel and discarding
+it afterwards roughly halves *mild* onset damping, and job 11174 looked like a success on that
+basis. But 11174 was run at seed 42 and SNR [−5,5] while the listened-to export uses
+`export_listening_samples.py`'s own defaults (seed 123, SNR [1,10]) — a different, harder draw, so
+its per-sample numbers did not correspond to anything anyone had heard. Re-running at the export's
+settings reproduced the exported audio exactly (3-speaker sample_03: −30.72 dB here against −30.74
+measured from the .wav) and showed padding leaves the severe cases unchanged or slightly worse
+(−30.72 → −32.04; −35.47 → −35.99). The lesson is procedural: a diagnostic aimed at a listening
+report has to be run on the samples that were listened to, or it measures a different phenomenon.
+
+*What it actually is.* The affected output sits on a flat ≈−60 dB floor for the first ~0.5 s,
+independent of what the target is doing, then switches on abruptly and tracks correctly — a gate,
+not gradual damping. Cross-correlation puts the best lag at 0 frames, so it is not misalignment, and
+Stage 1's output is clean across the same frames. Nor is it driven by the audio: `3speakers/sample_01`
+and `4speakers/sample_01` are built from the *same* target utterance, and the 3-speaker case starts
+at −0.6 dB while the 4-speaker case gates at −34.5 dB. Adding one interferer flips the model into a
+collapsed state. Local SNR does predict *mild* damping (−0.4 dB where the target dominates, −7 dB
+where it is buried below −15 dB), and position adds to it (equally-buried frames: −10.0 dB in the
+first 0.5 s against −5.8 dB later) — but the severe cases have onset target-to-mixture ratios of
+about −1 dB, meaning the target dominates, so neither effect explains them.
+
+*It is a regression.* The 2026-09-04 listening export was still on disk, so the same measurement
+could be applied to it — same tool, same seed, same sample indices, only older checkpoints and
+cfg_scale 1.5:
+
+| | 2026-09-04 | 2026-09-14 |
+|---|---|---|
+| median onset level vs ground truth | −0.31 dB | −7.82 dB |
+| samples gated below −10 dB | **0 / 12** | **5 / 12** |
+| samples below −20 dB | 0 / 12 | 3 / 12 |
+
+The gate did not exist before the low-SNR campaign. §5.8's clean verdict was correct for the
+checkpoint it tested; entries 22–29 then introduced this while every metric in that battery scored
+the changes as improvements.
+
+*It is not the operating point (job 11176).* Guidance was the prime suspect, since this codebase
+already documents (entry 11; `FlowMatchingModule.inference`) that ‖v_cond − v_uncond‖ at t=0 runs
+5–40× larger than at later steps, and cfg_scale multiplies exactly that into an oversized first
+Euler step — which is what a hard output floor looks like. Sweeping cfg_scale 1.5/2.0/2.5 and
+cfg_warmup_steps 0/1/2 moved the gate count only between 6 and 7 of 24, and the worst sample by
+1.4 dB out of 35. Reverting to the pre-campaign guidance does not recover the pre-campaign audio.
+Guidance is worth about a decibel here; the defect is thirty.
+
+One incidental result from that sweep looked worth following up separately: `cfg_warmup_steps=2` at
+the deployed cfg_scale 2.5 improved mel-MSE from 3.083 to 2.751 (−11%) and SI-SDR from −8.95 to
+−8.47 dB, with no metric worse — apparently the first change in this campaign to improve the
+averaged metrics without a trade. It had also never been active in any reported number: only
+`full_eval.py` even exposes the flag, defaulting to 0, and no other inference path passes it at all.
+**Entry 36 followed this up and rejected it:** the quality gains replicate at full corpus scale, but
+accuracy falls in every condition, because warm-up is simply weaker guidance re-parameterized. "No
+metric worse" held only because this sweep did not measure accuracy.
+
+*What remains.* By elimination the cause is in the weights promoted on 2026-09-12 (Stage 1) and
+2026-09-13 (Stage 2). Both pre-promotion backups survive, so
+`scripts/run_diag_onset_ckpt_gpu.sh` runs the 2×2 — old/new Stage 1 against old/new Stage 2, all at
+the deployed operating point — with the old/old cell as the method's own control: if it does not
+come back near zero gated, the comparison against the 2026-09-04 export is invalid and the rest
+means nothing. Pairing old-S1+new-S2 against the deployed pipeline additionally says whether Stage
+2's adaptation *caused* the gate or *masked* one the new Stage 1 introduced.
+
+**33. The gate belongs to neither promotion — it is an interaction between them (2026-09-14, job 11177).**
+Entry 32 narrowed the cause to the two promoted checkpoints and set up the 2×2 to say which one.
+The answer is neither, and that is a more awkward result than either alternative.
+
+| Cell | Stage 1 | Stage 2 | gated | median onset | 4-speaker gated |
+|---|---|---|---|---|---|
+| A | old (`mask_best_prelowsnr_backup`) | old (`flow_best_preadaptnewmask_backup`) | 1 / 24 | −1.00 dB | 0 / 8 |
+| B | **new** | old | 1 / 24 | −2.01 dB | 0 / 8 |
+| C | old | **new** | 2 / 24 | −1.95 dB | 0 / 8 |
+| D | **new** | **new** — deployed | **7 / 24** | **−4.67 dB** | **3 / 8** |
+
+Cell A is the method's own control and it came back at 1/24, so the comparison is valid and the rest
+of the table can be read. Each promotion alone is indistinguishable from the pre-campaign pipeline:
+Stage 1 alone gates 1/24, Stage 2 alone 2/24, against the control's 1/24. Only the pair gates, and
+it does so **superadditively** — adding the two individual effects to the control predicts about
+2/24 and −2.96 dB, and the measurement is 7/24 and −4.67 dB. The 4-speaker column is the sharpest
+statement of it: A, B and C are all 0/8 and D is 3/8, so every gated 4-speaker sample in the
+deployed system requires *both* new checkpoints to be present.
+
+*Why this matters more than knowing which one to blame.* It removes the cheapest remedy from the
+table. Had B or C carried the gate, the fix would have been to revert that one promotion and keep
+the other's gains. Instead each checkpoint is individually clean and jointly defective, so there is
+nothing to revert: any fix has to address the coupling. It also converges with entry 30's finding
+from the opposite direction — there, a Stage 1 with 2.6× lower error made the *pipeline* worse
+because Stage 2 had been trained against a different input family. Both results say the same thing:
+in this two-stage design the stages are co-adapted, and neither stage's quality predicts the
+pipeline's.
+
+**34. A targeted fine-tune halves the gate but does not clear it (2026-09-14/15, jobs 11178, 11184).**
+With reverting unavailable, the obvious lever was to fine-tune Stage 2 against the condition it now
+fails. `flow_ft_onsetfix_final.pt`: 8000 steps, 4.13 h, best val_loss 1.0655 against the deployed
+checkpoint's 1.0764 — the proxy slightly improved, which in this project has never been predictive
+either way.
+
+The pre-registered bar, fixed before the run, was ≤ 1/24 gated — the pre-campaign pipeline's level,
+on the grounds that a defect absent before the campaign should be absent after a fix. The cheap gate
+check (job 11184, ~25 min) was deliberately run *before* the full battery, precisely so a candidate
+that still gated could be rejected without spending ~2 h of GPU on metrics that cannot see the
+defect anyway.
+
+| | deployed | onsetfix | bar |
+|---|---|---|---|
+| gated, all | 7 / 24 | **4 / 24** | ≤ 1/24 — **fail** |
+| gated 2 / 3 / 4 speakers | 1/8, 3/8, 3/8 | 0/8, 1/8, **3/8** | |
+| median onset | −4.67 dB | −2.37 dB | |
+
+Real movement — 2-speaker onsets became clean and 3-speaker went 3/8 to 1/8 — but **4-speaker did
+not shift at all**, and the total misses the bar by three samples. Rejected on its own rule. In
+hindsight the shortfall is explained by entry 33: this fine-tune adjusted Stage 2 in isolation,
+treating a coupling defect as though it lived in one stage.
+
+*An infrastructure lesson from the same days.* The battery submitted for this candidate anyway
+(job 11187) was killed by its time limit having completed one stage of five, and two earlier gate
+runs (11182, 11183) burned their entire allocation retrying a `huggingface.co` HEAD request for
+`microsoft/wavlm-base-plus-sv`. Neither was a code fault. The HF retries are now prevented by
+exporting `HF_HUB_OFFLINE=1`/`TRANSFORMERS_OFFLINE=1` in the launchers, since the weights are always
+already in the node's cache. The time-limit kill had a different cause, visible in the job's own
+`nvidia-smi` preamble: a foreign process held 14,994 MiB of the node's 16,384 MiB GPU, and
+per-sample time degraded from 5.5 s to 76.8 s — a stage budgeted at 5 minutes took 347. The
+diagnostic preamble that entry 13 added for a different reason is what made this legible; it is
+worth reading before trusting any timing on this cluster.
+
+**35. The inference-side repair: built, measured, and it does not fix the gate either (2026-09-16, jobs 11202, 11205).**
+Entry 32 had already concluded that padding does not fix the gate. This entry re-opened that
+question and confirmed the same answer with stronger evidence, which is worth recording honestly:
+the re-examination was prompted by re-reading job 11174's pad sweep without initially carrying
+forward entry 32's seed-42 caveat, and it cost a battery run to land where entry 32 already was.
+What the work does add is (a) a measurement at the deployed operating point and at full corpus
+scale rather than on 24 samples at a different draw, and (b) a validated, inert-by-default
+implementation that can be switched on if a future checkpoint changes the picture.
+
+*What was built.* `models/flow.py inference_with_onset_splice()` — run Stage 2 twice, once with a
+silent lead-in and once without, keep the padded run's first 100 frames, cross-fade 20 frames, and
+take the unpadded run thereafter, so everything past the cross-fade is bit-identical to current
+behaviour and only the region that could improve is able to move the averages. `pad_frames=0` is
+the default and returns the ordinary call, so all six inference paths (`eval_multi_speaker.py`,
+`verify_eer.py`, `full_eval.py`, `eval_libri2mix.py`, `export_listening_samples.py`,
+`inference/infer.py`) are unchanged until opted in, via `--onset_pad_frames` or
+`inference.onset_pad_frames`. In the two chunked callers the repair is applied only to the chunk at
+`start == 0`: interior chunks have genuine left context, and entry 31 measured interior onsets at
++0.29 dB, so padding them would be repairing something that is not broken. `test_onset_splice.py`
+(30 checks) pins both invariants — the disabled path is bit-identical and runs a single forward
+pass, and the tail past the cross-fade is bit-identical to the unpadded run.
+
+*Battery at scale (job 11202, `onsetpad12`).* A properly paired comparison: the
+checkpoint-independent probes are identical to job 11112's to four decimals (low-SNR mixture 64.0%
+/ AUC 0.7117 and ceiling 90.3% / 0.9677; corpus-wide mixture 71.0% and ceiling 90.8%), confirming
+the same samples were scored and that only Stage 2's output changed.
+
+| | pad 0 (11112) | spliced pad 12 (11202) |
+|---|---|---|
+| low-SNR accuracy / AUC | 80.3% / 0.8827 | 79.3% / 0.8798 |
+| corpus-wide accuracy (n=400) | 86.2% / 0.9361 | 85.8% / 0.9348 |
+| 2 / 3 / 4-speaker accuracy | 85.7 / 80.0 / 77.0 | 85.3 / 80.3 / 77.0 |
+| in-domain n=2620 SI-SDR vs mixture | +1.75 dB | +1.76 dB |
+| in-domain catastrophic | 10.2% | 9.9% |
+| Libri2Mix all-slice SI-SDR vs mixture | +3.39 dB | +3.42 dB |
+
+SI-SDR is fractionally better everywhere and accuracy fractionally worse everywhere. Every
+individual delta sits inside n=300/n=400 noise, though AUC falls in 5 of 5 conditions in a paired
+comparison, which suggests a real but negligible cost. The reason accuracy cannot respond is
+structural: the WavLM speaker embedding is mean-pooled over the whole utterance, so half a second
+of a four-to-ten-second clip barely moves it. That is the same insensitivity that let the gate
+through §5.8's battery in the first place — the metric was never going to score this, which is why
+the defect was found by ear.
+
+*Gate at the operating point (job 11205).* Both columns in one table, same samples, same seed:
+
+| | pad 0 | spliced pad 12 |
+|---|---|---|
+| onset 2 / 3 / 4 speakers | −1.85 / −4.14 / −7.75 dB | −1.57 / −3.58 / **−7.06** dB |
+| median onset, all | −4.67 dB | −3.36 dB |
+| tail, all (validity check) | −1.30 dB | −1.29 dB |
+| gated 2 / 3 / 4 speakers | 1/8, 3/8, 3/8 | 1/8, **2/8**, 3/8 |
+| **gated, all** | **7 / 24** | **6 / 24** |
+
+One gated sample recovered, and it is a 3-speaker one; **4-speaker is again completely unmoved**.
+The tail row is the built-in check that the splice is correct — it matches the unpadded run to
+0.01 dB, as it must by construction, while pure padding drifts to −1.20. So the mechanism works
+exactly as designed and the idea still fails: a 1.3 dB median improvement that clears one sample of
+seven, against a bar of one.
+
+*Where that leaves the defect.* Two independent mitigations have now been measured against the same
+pre-registered bar and both failed — retraining Stage 2 (4/24) and an inference-side repair (6/24) —
+and both failed in the same place, the 4-speaker condition. That is what entry 33 predicts: a defect
+that lives in the interaction between two checkpoints is not reachable by adjusting one stage, nor
+by post-processing the output of the pair. Anything further would have to co-adapt both stages, or
+weight the loss toward the frames that fail, at 4–13 h per attempt with no evidence that the budget
+is the binding constraint. The defect is therefore documented as a characterized limitation rather
+than pursued: cause established by ablation, two remedies measured and rejected on a rule fixed in
+advance.
+
+**36. The CFG warm-up lead, validated and rejected: "no metric worse" was an artifact of which
+metrics were measured (2026-09-17, job 11210).** Entries 32 and 35 both flagged `cfg_warmup_steps=2`
+at cfg_scale 2.5 as the only change in the whole campaign that improved averaged metrics with
+nothing worse — mel-MSE −11%, SI-SDR +0.48 dB — and noted it had never been active in any reported
+number, since only `full_eval.py` exposed the flag and it defaults to 0. Wiring it through the other
+five inference paths (and fixing `full_eval.py`, whose hardcoded `default=0` would otherwise have
+applied a config change to four of the five battery stages and silently skewed the comparison) made
+the first measurement on the accuracy battery possible.
+
+*The quality half replicated.* Everything job 11176 saw on 24 samples held at n=2620 and n=6000:
+in-domain mel S2-vs-S1 72.9 → 73.6%, catastrophic 10.2 → 9.6%, SI-SDR vs mixture +1.75 → +1.83 dB
+and vs Stage 1 +1.30 → +1.39 dB, the Stage-2-hurt-it rate 25.1 → 23.2%, Libri2Mix catastrophic
+13.1 → 12.5% and SI-SDR vs mixture +3.39 → +3.46 dB. Every signal-quality axis improved.
+
+*The accuracy half is what had never been measured.*
+
+| | cfg 2.5 (job 11112) | + warm-up 2 (job 11210) |
+|---|---|---|
+| corpus-wide accuracy / AUC | 86.2% / 0.9361 | 85.5% / 0.9327 |
+| 2-speaker | 85.7% / 0.9342 | 85.0% / 0.9269 |
+| 3-speaker | 80.0% / 0.8870 | 78.4% / 0.8752 |
+| 4-speaker | **77.0%** / 0.8511 | **74.6%** / 0.8292 |
+
+AUC falls in all four conditions and 4-speaker gives back 2.4 pp — the entire gain entry 29's
+guidance re-tune bought there.
+
+*Why, mechanically.* `cfg_warmup_steps=2` runs the first two of four Euler steps at cfg_scale 1.0,
+which **lowers the guidance applied across the trajectory** — time-averaged, about cfg 1.75. Entry 28
+already mapped that axis: weaker guidance buys SI-SDR and costs accuracy. The measurement lands where
+that predicts, reproducing cfg 2.0's 2-speaker accuracy (85.0%) almost exactly. So this is not a free
+win but the *same* guidance trade-off re-parameterized, on an axis this project had already swept and
+deliberately optimized in the opposite direction. It looked free only because the diagnostic that
+surfaced it reported mel and SI-SDR and not accuracy — the one axis carrying the cost.
+
+*Verdict:* rejected; `inference.cfg_warmup_steps` stays 0. The flag and its plumbing remain in place,
+inert by default, so a future checkpoint can be re-tested in one command. The generalizable lesson is
+one this project keeps relearning in new forms: a change that improves every metric you happen to be
+looking at has not been shown to be free. Entry 18's mel-versus-SI-SDR divergence, entry 30's
+Stage-1-accuracy-versus-pipeline-quality result, and this are three instances of the same trap.
+
 **Where this leaves the project:** two of three identified limitations (t≈0, speaker-count) are
 diagnosed and substantially mitigated with numbers to show it; the third (SNR-coverage) is
 characterized with an equally clear root cause but not yet fixed, and is documented as future work
 rather than pursued further at this time (§5.6 in the results chapter). The architecture is verified
 against the actual running code, not just the paper. The current checkpoint has been validated both
 quantitatively (three independent metrics, two corpora, three speaker counts) and qualitatively (by
-ear).
+ear) — with one characterized defect: the listening pass in entries 31–32 found a gate on the first
+~0.5 s of affected utterances that no quantitative metric can see, and which the low-SNR campaign
+introduced. Entries 33–35 closed the investigation without closing the defect: the 2×2 ablation
+proved it is an *interaction* between the two promoted checkpoints rather than a fault in either
+(each is individually indistinguishable from the pre-campaign pipeline), and two mitigations
+measured against a bar fixed in advance — a targeted Stage-2 fine-tune and an inference-side onset
+repair — both failed, both in the 4-speaker condition. It stands as a documented limitation with an
+established cause, in the same form as the SNR-coverage gap: understood, measured, and honestly
+reported rather than quietly fixed or quietly dropped.
 
 ---
 
