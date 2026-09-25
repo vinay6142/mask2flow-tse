@@ -58,6 +58,7 @@ from data.mel import MelSpectrogramExtractor, segment_waveform, make_frame_mask,
 from data.augment import load_audio, mix_multi_at_snr, trim_trailing_silence
 from inference.vocoder import load_hifigan_generator, mel_to_audio_hifigan
 from models.speaker_encoder import SpeakerEncoder
+from models.flow import inference_with_onset_splice
 
 from eval.results_stage2 import load_masking, load_flow
 from eval.audio_domain_quality import si_sdr, waveform_mse
@@ -169,7 +170,7 @@ def build_speaker_index(librispeech_dir, split, min_utterances=2):
 def process_one(sample_idx, base_seed, speaker_utterances, speakers, n_interferers,
                  cfg, mel_extractor, mask_model, flow_model, encoder, vocoder,
                  cfg_scale, n_steps, snr_min, snr_max, device, compute_audio,
-                 stage1_mode="network"):
+                 stage1_mode="network", onset_pad_frames=0, cfg_warmup_steps=0, solver="euler"):
     seed = base_seed + sample_idx
     random.seed(seed)
     torch.manual_seed(seed)
@@ -229,7 +230,10 @@ def process_one(sample_idx, base_seed, speaker_utterances, speakers, n_interfere
         stage1_out = network_s1
     else:
         stage1_out = oracle_stage1(mixture_mel, target_mel, stage1_mode)
-    stage2_out = flow_model.inference(stage1_out, d_vec, cfg_scale=cfg_scale, n_steps=n_steps)
+    stage2_out = inference_with_onset_splice(flow_model, stage1_out, d_vec,
+                                             cfg_scale=cfg_scale, n_steps=n_steps,
+                                             cfg_warmup_steps=cfg_warmup_steps,
+                                             pad_frames=onset_pad_frames, solver=solver)
 
     mix_b = mixture_mel.unsqueeze(0)
     tgt_b = target_mel.unsqueeze(0)
@@ -255,6 +259,8 @@ def process_one(sample_idx, base_seed, speaker_utterances, speakers, n_interfere
     # (identical to mel_s1_mse in network mode), and how far the mask
     # formulation limits Stage 1 on this sample.
     rec["stage1_mode"] = stage1_mode
+    rec["onset_pad_frames"] = onset_pad_frames
+    rec["cfg_warmup_steps"] = cfg_warmup_steps
     rec["mel_s1_network_mse"] = masked_mse(network_s1, tgt_b, frame_mask).item()
     rec.update(formulation_stats(mixture_mel, target_mel, network_s1, frame_mask))
 
@@ -453,6 +459,26 @@ if __name__ == "__main__":
     parser.add_argument("--snr_max", type=float, default=None, help="Default: cfg.data.snr_max")
     parser.add_argument("--cfg_scale", type=float, default=None)
     parser.add_argument("--n_steps", type=int, default=None)
+    parser.add_argument("--solver", default=None, choices=["euler", "heun", "midpoint"],
+                         help="ODE integrator for Stage 2. 'euler' (default) is the paper's method "
+                              "and what every number in docs/ used. 'heun'/'midpoint' are 2nd-order "
+                              "and cost 2 velocity evals per step, so halve --n_steps to hold the "
+                              "compute budget fixed. Default: cfg.inference.solver, else euler.")
+    parser.add_argument("--reference_length", type=float, default=None,
+                         help="Seconds of enrollment audio for the speaker encoder. Overrides "
+                              "cfg.audio.reference_length in place, so it reaches the dataset and "
+                              "every consumer. Default: the config value (3.0), which is what every "
+                              "number in docs/ was measured with.")
+    parser.add_argument("--cfg_warmup_steps", type=int, default=None,
+                         help="Euler steps run at cfg_scale=1.0 before applying the full cfg_scale "
+                              "(see FlowMatchingModule.inference). 0 = current behavior. "
+                              "Default: cfg.inference.cfg_warmup_steps, else 0.")
+    parser.add_argument("--onset_pad_frames", type=int, default=None,
+                         help="Silence frames prepended to Stage 2's input and dropped again, to "
+                              "repair the frame-0 onset damping (see models/flow.py "
+                              "inference_with_onset_splice). 0 = current behavior, bit-identical. "
+                              "12-25 roughly halved the damping in job 11174; costs a second "
+                              "Stage-2 pass. Default: cfg.inference.onset_pad_frames, else 0.")
     parser.add_argument("--skip_audio_domain", action="store_true",
                          help="Skip vocoding + SI-SDR + speaker-identity check (the expensive part on CPU).")
     parser.add_argument("--output", default="outputs/results/eval_multi_speaker.jsonl")
@@ -483,15 +509,28 @@ if __name__ == "__main__":
     cfg = OmegaConf.load(args.config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # Override in place rather than threading a parameter: ref_seg_len is read
+    # off cfg.audio in this script AND inside LibriSpeechTSEDataset, so one
+    # assignment reaches every consumer.
+    if args.reference_length is not None:
+        cfg.audio.reference_length = args.reference_length
+
     cfg_scale = args.cfg_scale if args.cfg_scale is not None else cfg.inference.cfg_scale
     n_steps   = args.n_steps if args.n_steps is not None else cfg.inference.flow_steps
     snr_min   = args.snr_min if args.snr_min is not None else cfg.data.snr_min
     snr_max   = args.snr_max if args.snr_max is not None else cfg.data.snr_max
+    onset_pad_frames = (args.onset_pad_frames if args.onset_pad_frames is not None
+                        else int(getattr(cfg.inference, "onset_pad_frames", 0)))
+    cfg_warmup_steps = (args.cfg_warmup_steps if args.cfg_warmup_steps is not None
+                        else int(getattr(cfg.inference, "cfg_warmup_steps", 0)))
+    solver = args.solver if args.solver is not None else str(getattr(cfg.inference, "solver", "euler"))
 
     print(f"[EvalMultiSpeaker] Device: {device}  n_interferers={args.n_interferers} "
           f"({args.n_interferers + 1} total speakers)  cfg_scale={cfg_scale}  n_steps={n_steps}  "
           f"snr_range=[{snr_min}, {snr_max}]  audio_domain={'off' if args.skip_audio_domain else 'on'}  "
-          f"stage1_mode={args.stage1_mode}")
+          f"stage1_mode={args.stage1_mode}  onset_pad_frames={onset_pad_frames}  "
+          f"cfg_warmup_steps={cfg_warmup_steps}  "
+          f"reference_length={getattr(cfg.audio, 'reference_length', 3.0)}  solver={solver}")
     if args.stage1_mode != "network":
         print("[EvalMultiSpeaker] NOTE: Stage 1 is replaced by a diagnostic ORACLE built from the "
               "clean target -- these results are not achievable at inference and must not be "
@@ -542,6 +581,9 @@ if __name__ == "__main__":
                 cfg_scale, n_steps, snr_min, snr_max, device,
                 compute_audio=not args.skip_audio_domain,
                 stage1_mode=args.stage1_mode,
+                onset_pad_frames=onset_pad_frames,
+                cfg_warmup_steps=cfg_warmup_steps,
+                solver=solver,
             )
             f_out.write(json.dumps(rec) + "\n")
             f_out.flush()

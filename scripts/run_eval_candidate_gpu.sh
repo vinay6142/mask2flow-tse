@@ -11,7 +11,20 @@
 # doesn't need its own near-duplicate eval script.
 #
 # Usage:
-#   sbatch scripts/run_eval_candidate_gpu.sh <flow_ckpt_path> <tag> [mask_ckpt_path] [cfg_scale]
+#   sbatch scripts/run_eval_candidate_gpu.sh <flow_ckpt_path> <tag> [mask_ckpt_path] [cfg_scale] [onset_pad_frames] [cfg_warmup_steps]
+#
+# e.g. validating cfg_warmup_steps=2 on the CURRENT system -- flagged in docs
+# timeline entries 32 and 35 as the only change in the whole campaign that
+# improved averaged metrics with nothing worse (mel -11%, SI-SDR +0.48dB), but
+# measured on 24 samples and never on the accuracy battery:
+#   sbatch scripts/run_eval_candidate_gpu.sh checkpoints_v2/flow/flow_best.pt warmup2 \
+#       checkpoints_v2/masking/mask_best.pt 2.5 0 2
+#
+# e.g. measuring the onset-damping repair on the CURRENT system (no retraining
+# involved -- it is an inference-side change, see models/flow.py
+# inference_with_onset_splice):
+#   sbatch scripts/run_eval_candidate_gpu.sh checkpoints_v2/flow/flow_best.pt onsetpad12 \
+#       checkpoints_v2/masking/mask_best.pt 2.5 12
 #
 # e.g. validating a new guidance setting on the CURRENT checkpoints, without
 # editing configs/default_v2.yaml (so a failed validation leaves nothing changed):
@@ -43,13 +56,34 @@ CKPT="$1"
 TAG="$2"
 MASK_CKPT="${3:-checkpoints_v2/masking/mask_best.pt}"
 CFG_SCALE="${4:-}"     # optional; empty = each script's config default (inference.cfg_scale)
+ONSET_PAD="${5:-}"     # optional; empty = config default (inference.onset_pad_frames, currently 0)
+CFG_WARMUP="${6:-}"    # optional; empty = config default (inference.cfg_warmup_steps, currently 0)
 CFG_ARG=""
+ONSET_ARG=""
+WARMUP_ARG=""
 # NOTE: written as a full if, not `[ -n "$X" ] && VAR=...` -- that form returns
 # non-zero when the variable is empty, which is the common path here, and this
 # script runs under `set -e`.
 if [ -n "$CFG_SCALE" ]; then
     CFG_ARG="--cfg_scale $CFG_SCALE"
 fi
+if [ -n "$ONSET_PAD" ]; then
+    ONSET_ARG="--onset_pad_frames $ONSET_PAD"
+fi
+if [ -n "$CFG_WARMUP" ]; then
+    WARMUP_ARG="--cfg_warmup_steps $CFG_WARMUP"
+fi
+
+# Anything after the 6 positionals is forwarded verbatim to all five stages.
+# Added instead of a 7th/8th positional: the list was already long enough to
+# mis-invoke, and every eval script shares the same flag vocabulary. e.g.
+#   ... flow_best.pt ref5 mask_best.pt 2.5 0 0 --reference_length 5.0
+#   ... flow_best.pt projbest mask_best.pt 2.5 0 0 \
+#         --projection_ckpt checkpoints_speaker_encoder/projection_best.pt
+N_SHIFT=6
+if [ "$#" -lt "$N_SHIFT" ]; then N_SHIFT="$#"; fi
+shift "$N_SHIFT"
+EXTRA_ARGS="$*"
 
 if [ -z "$CKPT" ] || [ -z "$TAG" ]; then
     echo "ERROR: usage: sbatch $0 <flow_ckpt_path> <tag> [mask_ckpt_path] [cfg_scale]"
@@ -62,6 +96,13 @@ for f in "$CKPT" "$MASK_CKPT"; do
     fi
 done
 
+# Guard against job 11183's failure: a huggingface.co HEAD request for
+# microsoft/wavlm-base-plus-sv hung and retried until the job hit its time
+# limit, having run nothing. The weights are already in the node's HF cache,
+# so force offline loading rather than depending on outbound HTTPS.
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+
 echo "=== DIAGNOSTIC ==="
 nvidia-smi || echo "[Diag] nvidia-smi failed -- no GPU visible."
 source /home/mtech1/25CS60R85/miniconda3/etc/profile.d/conda.sh
@@ -73,11 +114,16 @@ echo "=== Stage 2   : $CKPT"
 echo "=== Stage 1   : $MASK_CKPT"
 echo "=== Tag       : $TAG"
 echo "=== cfg_scale : ${CFG_SCALE:-(config default, currently 2.5)}"
+echo "=== extra     : ${EXTRA_ARGS:-(none)}"
 echo ""
 
 BASE_ARGS="--mask_ckpt $MASK_CKPT \
     --flow_ckpt $CKPT \
-    --projection_ckpt checkpoints_speaker_encoder/projection_latest.pt $CFG_ARG"
+    --projection_ckpt checkpoints_speaker_encoder/projection_latest.pt \
+    $CFG_ARG $ONSET_ARG $WARMUP_ARG $EXTRA_ARGS"
+# NOTE: a --projection_ckpt in EXTRA_ARGS appears AFTER the default above, and
+# argparse takes the last occurrence, so passing one as an extra flag overrides
+# the default rather than conflicting with it.
 
 echo "======================================================================"
 echo " REFERENCE NUMBERS -- current system = mask_best.pt + flow_best.pt"

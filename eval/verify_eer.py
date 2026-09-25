@@ -49,6 +49,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from inference.vocoder import load_hifigan_generator, mel_to_audio_hifigan
 from models.speaker_encoder import SpeakerEncoder
+from models.flow import inference_with_onset_splice
 from data.augment import trim_trailing_silence
 from eval.results_stage2 import load_masking, load_flow
 from eval.full_eval import build_loader
@@ -56,7 +57,8 @@ from eval.full_eval import build_loader
 
 @torch.no_grad()
 def collect_embeddings(loader, mask_model, flow_model, encoder, vocoder,
-                        cfg_scale, n_steps, device, sr):
+                        cfg_scale, n_steps, device, sr, onset_pad_frames=0,
+                        cfg_warmup_steps=0, solver="euler"):
     """
     Runs the full pipeline over every batch in loader and returns, for
     every sample: its reference embedding, mixture/Stage2/target probe
@@ -90,8 +92,10 @@ def collect_embeddings(loader, mask_model, flow_model, encoder, vocoder,
             for b in range(B)
         ])
         stage1_out, _ = mask_model(mixture, d_vec)
-        stage2_out = flow_model.inference(
-            stage1_out, d_vec, cfg_scale=cfg_scale, n_steps=n_steps,
+        stage2_out = inference_with_onset_splice(
+            flow_model, stage1_out, d_vec, cfg_scale=cfg_scale, n_steps=n_steps,
+            cfg_warmup_steps=cfg_warmup_steps, pad_frames=onset_pad_frames,
+            solver=solver,
         )
 
         for b in range(B):
@@ -195,6 +199,24 @@ if __name__ == "__main__":
                               "up once the pipeline is confirmed working).")
     parser.add_argument("--cfg_scale", type=float, default=None)
     parser.add_argument("--n_steps", type=int, default=None)
+    parser.add_argument("--solver", default=None, choices=["euler", "heun", "midpoint"],
+                         help="ODE integrator for Stage 2. 'euler' (default) is the paper's method "
+                              "and what every number in docs/ used. 'heun'/'midpoint' are 2nd-order "
+                              "and cost 2 velocity evals per step, so halve --n_steps to hold the "
+                              "compute budget fixed. Default: cfg.inference.solver, else euler.")
+    parser.add_argument("--reference_length", type=float, default=None,
+                         help="Seconds of enrollment audio for the speaker encoder. Overrides "
+                              "cfg.audio.reference_length in place so it reaches the dataset. "
+                              "Default: the config value (3.0).")
+    parser.add_argument("--cfg_warmup_steps", type=int, default=None,
+                         help="Euler steps run at cfg_scale=1.0 before applying the full cfg_scale "
+                              "(see FlowMatchingModule.inference). 0 = current behavior. "
+                              "Default: cfg.inference.cfg_warmup_steps, else 0.")
+    parser.add_argument("--onset_pad_frames", type=int, default=None,
+                         help="Silence frames prepended to Stage 2's input and dropped again, to "
+                              "repair the frame-0 onset damping (see models/flow.py "
+                              "inference_with_onset_splice). 0 = current behavior, bit-identical. "
+                              "Default: cfg.inference.onset_pad_frames, else 0.")
     parser.add_argument("--save_embeddings", default=None,
                          help="Optional path to save collected embeddings (.pt) "
                               "for reuse without rerunning the model.")
@@ -204,10 +226,22 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.seed)
 
+    # In place so LibriSpeechTSEDataset (which reads self.cfg.audio) sees it too.
+    if args.reference_length is not None:
+        cfg.audio.reference_length = args.reference_length
+
     cfg_scale = args.cfg_scale if args.cfg_scale is not None else cfg.inference.cfg_scale
     n_steps = args.n_steps if args.n_steps is not None else cfg.inference.flow_steps
+    onset_pad_frames = (args.onset_pad_frames if args.onset_pad_frames is not None
+                        else int(getattr(cfg.inference, "onset_pad_frames", 0)))
+    cfg_warmup_steps = (args.cfg_warmup_steps if args.cfg_warmup_steps is not None
+                        else int(getattr(cfg.inference, "cfg_warmup_steps", 0)))
+    solver = args.solver if args.solver is not None else str(getattr(cfg.inference, "solver", "euler"))
 
     print(f"[VerifyEER] Device: {device}  cfg_scale={cfg_scale}  n_steps={n_steps}  "
+          f"cfg_warmup_steps={cfg_warmup_steps}  "
+          f"onset_pad_frames={onset_pad_frames}  "
+          f"reference_length={getattr(cfg.audio, 'reference_length', 3.0)}  solver={solver}  "
           f"max_samples={args.max_samples}")
 
     encoder = SpeakerEncoder(
@@ -228,7 +262,8 @@ if __name__ == "__main__":
 
     ref_emb, mix_emb, s2_emb, tgt_emb, speakers = collect_embeddings(
         loader, mask_model, flow_model, encoder, vocoder, cfg_scale, n_steps, device,
-        cfg.audio.sample_rate,
+        cfg.audio.sample_rate, onset_pad_frames=onset_pad_frames,
+        cfg_warmup_steps=cfg_warmup_steps, solver=solver,
     )
 
     n_uniq_speakers = len(set(speakers))

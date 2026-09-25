@@ -72,6 +72,7 @@ from data.mel import MelSpectrogramExtractor, segment_waveform, make_frame_mask,
 from data.augment import load_audio, mix_multi_at_snr, trim_trailing_silence
 from inference.vocoder import load_hifigan_generator, mel_to_audio_hifigan
 from models.speaker_encoder import SpeakerEncoder
+from models.flow import inference_with_onset_splice
 
 from eval.results_stage2 import load_masking, load_flow
 from eval.audio_domain_quality import si_sdr
@@ -158,7 +159,8 @@ METRICS DEFINITIONS (info.json)
 @torch.no_grad()
 def generate_one(sample_idx, base_seed, speaker_utterances, speakers, n_interferers,
                   cfg, mel_extractor, mask_model, flow_model, encoder, vocoder,
-                  cfg_scale, n_steps, snr_min, snr_max, device):
+                  cfg_scale, n_steps, snr_min, snr_max, device, onset_pad_frames=0,
+                  cfg_warmup_steps=0, solver="euler"):
     seed = base_seed + sample_idx
     random.seed(seed)
     torch.manual_seed(seed)
@@ -200,7 +202,10 @@ def generate_one(sample_idx, base_seed, speaker_utterances, speakers, n_interfer
 
     d_vec = encoder(ref_wav.unsqueeze(0).to(device))
     stage1_out, _ = mask_model(mixture_mel.unsqueeze(0), d_vec)
-    stage2_out = flow_model.inference(stage1_out, d_vec, cfg_scale=cfg_scale, n_steps=n_steps)
+    stage2_out = inference_with_onset_splice(flow_model, stage1_out, d_vec,
+                                             cfg_scale=cfg_scale, n_steps=n_steps,
+                                             cfg_warmup_steps=cfg_warmup_steps,
+                                             pad_frames=onset_pad_frames, solver=solver)
 
     mix_b = mixture_mel.unsqueeze(0)
     tgt_b = target_mel.unsqueeze(0)
@@ -282,6 +287,23 @@ if __name__ == "__main__":
     parser.add_argument("--snr_max", type=float, default=None, help="Default: cfg.data.snr_max")
     parser.add_argument("--cfg_scale", type=float, default=None)
     parser.add_argument("--n_steps", type=int, default=None)
+    parser.add_argument("--solver", default=None, choices=["euler", "heun", "midpoint"],
+                         help="ODE integrator for Stage 2. 'euler' (default) is the paper's method "
+                              "and what every number in docs/ used. 'heun'/'midpoint' are 2nd-order "
+                              "and cost 2 velocity evals per step, so halve --n_steps to hold the "
+                              "compute budget fixed. Default: cfg.inference.solver, else euler.")
+    parser.add_argument("--reference_length", type=float, default=None,
+                         help="Seconds of enrollment audio for the speaker encoder. Overrides "
+                              "cfg.audio.reference_length in place. Default: the config value (3.0).")
+    parser.add_argument("--cfg_warmup_steps", type=int, default=None,
+                         help="Euler steps run at cfg_scale=1.0 before applying the full cfg_scale "
+                              "(see FlowMatchingModule.inference). 0 = current behavior. "
+                              "Default: cfg.inference.cfg_warmup_steps, else 0.")
+    parser.add_argument("--onset_pad_frames", type=int, default=None,
+                         help="Silence frames prepended to Stage 2's input and dropped again, to "
+                              "repair the frame-0 onset damping (see models/flow.py "
+                              "inference_with_onset_splice). 0 = current behavior, bit-identical. "
+                              "Default: cfg.inference.onset_pad_frames, else 0.")
     parser.add_argument("--output_dir", default="outputs/listening_samples")
     args = parser.parse_args()
 
@@ -289,11 +311,21 @@ if __name__ == "__main__":
 
     cfg = OmegaConf.load(args.config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if args.reference_length is not None:
+        cfg.audio.reference_length = args.reference_length
     cfg_scale = args.cfg_scale if args.cfg_scale is not None else cfg.inference.cfg_scale
     n_steps = args.n_steps if args.n_steps is not None else cfg.inference.flow_steps
     snr_min = args.snr_min if args.snr_min is not None else cfg.data.snr_min
     snr_max = args.snr_max if args.snr_max is not None else cfg.data.snr_max
+    onset_pad_frames = (args.onset_pad_frames if args.onset_pad_frames is not None
+                        else int(getattr(cfg.inference, "onset_pad_frames", 0)))
 
+    cfg_warmup_steps = (args.cfg_warmup_steps if args.cfg_warmup_steps is not None
+                        else int(getattr(cfg.inference, "cfg_warmup_steps", 0)))
+    solver = args.solver if args.solver is not None else str(getattr(cfg.inference, "solver", "euler"))
+
+    print(f"[ExportSamples] onset_pad_frames={onset_pad_frames}  "
+          f"cfg_warmup_steps={cfg_warmup_steps}")
     print(f"[ExportSamples] Device: {device}  cfg_scale={cfg_scale}  n_steps={n_steps}  "
           f"conditions(n_interferers)={n_interferers_list}  "
           f"n_per_condition={args.n_samples_per_condition}")
@@ -334,6 +366,9 @@ if __name__ == "__main__":
                 i, args.seed, speaker_utterances, speakers, n_interferers,
                 cfg, mel_extractor, mask_model, flow_model, encoder, vocoder,
                 cfg_scale, n_steps, snr_min, snr_max, device,
+                onset_pad_frames=onset_pad_frames,
+                cfg_warmup_steps=cfg_warmup_steps,
+                solver=solver,
             )
             sample_dir = cond_dir / f"sample_{i:02d}"
             sample_dir.mkdir(parents=True, exist_ok=True)

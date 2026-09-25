@@ -80,6 +80,7 @@ from data.augment import load_audio, trim_trailing_silence
 from inference.infer import _chunk_starts, _overlap_add
 from inference.vocoder import load_hifigan_generator, mel_to_audio_hifigan
 from models.speaker_encoder import SpeakerEncoder
+from models.flow import inference_with_onset_splice
 
 from eval.results_stage2 import load_masking, load_flow
 from eval.audio_domain_quality import si_sdr, waveform_mse
@@ -165,7 +166,8 @@ def build_tasks(generated_rows, orig_lookup, both_directions):
 
 @torch.no_grad()
 def run_chunked_pipeline(mixture_wav, ref_wav, mel_extractor, mask_model, flow_model,
-                          encoder, chunk_frames, overlap_frames, cfg_scale, n_steps, device):
+                          encoder, chunk_frames, overlap_frames, cfg_scale, n_steps, device,
+                          onset_pad_frames=0, cfg_warmup_steps=0, solver="euler"):
     """
     Same per-chunk masking + flow-matching + overlap-add reassembly as
     inference/infer.py's extract_target_speaker(), factored out here so
@@ -188,7 +190,16 @@ def run_chunked_pipeline(mixture_wav, ref_wav, mel_extractor, mask_model, flow_m
         chunk = chunk.unsqueeze(0)
 
         s1_out, _ = mask_model(chunk, d_vec)
-        s2_out = flow_model.inference(s1_out, d_vec, cfg_scale=cfg_scale, n_steps=n_steps)
+        # Onset repair applies to the utterance's true frame 0 only; interior
+        # chunks have real left context and show no damping (job 11174).
+        # cfg_warmup_steps applies to EVERY chunk -- it is about the Euler
+        # trajectory at t=0, which each chunk's inference restarts, not about
+        # position within the utterance the way the onset pad is.
+        s2_out = inference_with_onset_splice(
+            flow_model, s1_out, d_vec, cfg_scale=cfg_scale, n_steps=n_steps,
+            cfg_warmup_steps=cfg_warmup_steps, solver=solver,
+            pad_frames=onset_pad_frames if start == 0 else 0,
+        )
         stage1_chunks.append(s1_out[0])
         stage2_chunks.append(s2_out[0])
 
@@ -205,7 +216,7 @@ def run_chunked_pipeline(mixture_wav, ref_wav, mel_extractor, mask_model, flow_m
 def process_one(sample_id, row, target_idx, orig_lookup, librispeech_dir, sr, ref_seg_len,
                  mel_extractor, mask_model, flow_model, encoder, vocoder,
                  chunk_frames, overlap_frames, cfg_scale, n_steps, device, compute_audio,
-                 snr_lookup):
+                 snr_lookup, onset_pad_frames=0, cfg_warmup_steps=0, solver="euler"):
     mid = row["mixture_ID"]
     orig_paths = orig_lookup[mid]
     target_orig_rel = orig_paths[target_idx]
@@ -227,6 +238,8 @@ def process_one(sample_id, row, target_idx, orig_lookup, librispeech_dir, sr, re
     mixture_mel, s1_mel, s2_mel, d_vec, n_chunks = run_chunked_pipeline(
         mixture_wav, ref_wav, mel_extractor, mask_model, flow_model, encoder,
         chunk_frames, overlap_frames, cfg_scale, n_steps, device,
+        onset_pad_frames=onset_pad_frames, cfg_warmup_steps=cfg_warmup_steps,
+        solver=solver,
     )
     target_mel = mel_extractor(target_wav.to(device))
 
@@ -368,6 +381,24 @@ if __name__ == "__main__":
     parser.add_argument("--overlap_sec", type=float, default=2.0)
     parser.add_argument("--cfg_scale", type=float, default=None)
     parser.add_argument("--n_steps", type=int, default=None)
+    parser.add_argument("--solver", default=None, choices=["euler", "heun", "midpoint"],
+                         help="ODE integrator for Stage 2. 'euler' (default) is the paper's method "
+                              "and what every number in docs/ used. 'heun'/'midpoint' are 2nd-order "
+                              "and cost 2 velocity evals per step, so halve --n_steps to hold the "
+                              "compute budget fixed. Default: cfg.inference.solver, else euler.")
+    parser.add_argument("--reference_length", type=float, default=None,
+                         help="Seconds of enrollment audio for the speaker encoder. Overrides "
+                              "cfg.audio.reference_length in place. Default: the config value (3.0).")
+    parser.add_argument("--cfg_warmup_steps", type=int, default=None,
+                         help="Euler steps run at cfg_scale=1.0 before applying the full cfg_scale "
+                              "(see FlowMatchingModule.inference). Applied to every chunk. "
+                              "0 = current behavior. Default: cfg.inference.cfg_warmup_steps, else 0.")
+    parser.add_argument("--onset_pad_frames", type=int, default=None,
+                         help="Silence frames prepended to Stage 2's input and dropped again, to "
+                              "repair the frame-0 onset damping (see models/flow.py "
+                              "inference_with_onset_splice). Applied to the first chunk only. "
+                              "0 = current behavior, bit-identical. "
+                              "Default: cfg.inference.onset_pad_frames, else 0.")
     parser.add_argument("--max_samples", type=int, default=None)
     parser.add_argument("--skip_audio_domain", action="store_true",
                          help="Skip vocoding + SI-SDR (the expensive part on CPU).")
@@ -397,9 +428,18 @@ if __name__ == "__main__":
 
     cfg_scale = args.cfg_scale if args.cfg_scale is not None else cfg.inference.cfg_scale
     n_steps = args.n_steps if args.n_steps is not None else cfg.inference.flow_steps
+    if args.reference_length is not None:
+        cfg.audio.reference_length = args.reference_length
     ref_seg_len = getattr(cfg.audio, "reference_length", 3.0)
+    onset_pad_frames = (args.onset_pad_frames if args.onset_pad_frames is not None
+                        else int(getattr(cfg.inference, "onset_pad_frames", 0)))
+    cfg_warmup_steps = (args.cfg_warmup_steps if args.cfg_warmup_steps is not None
+                        else int(getattr(cfg.inference, "cfg_warmup_steps", 0)))
+    solver = args.solver if args.solver is not None else str(getattr(cfg.inference, "solver", "euler"))
 
     print(f"[EvalLibri2Mix] Device: {device}  cfg_scale={cfg_scale}  n_steps={n_steps}  "
+          f"cfg_warmup_steps={cfg_warmup_steps}  onset_pad_frames={onset_pad_frames}  "
+          f"reference_length={ref_seg_len}  solver={solver}  "
           f"both_directions={args.both_directions}  audio_domain={'off' if args.skip_audio_domain else 'on'}")
 
     mel_extractor = MelSpectrogramExtractor(
@@ -453,6 +493,8 @@ if __name__ == "__main__":
                 mel_extractor, mask_model, flow_model, encoder, vocoder,
                 chunk_frames, overlap_frames, cfg_scale, n_steps, device,
                 compute_audio=not args.skip_audio_domain, snr_lookup=snr_lookup,
+                onset_pad_frames=onset_pad_frames, cfg_warmup_steps=cfg_warmup_steps,
+                solver=solver,
             )
             if rec is None:
                 continue

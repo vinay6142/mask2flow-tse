@@ -77,6 +77,7 @@ from data.mel import make_frame_mask, masked_mse
 from data.librispeech import LibriSpeechTSEDataset
 from inference.vocoder import load_hifigan_generator, mel_to_audio_hifigan
 from models.speaker_encoder import SpeakerEncoder
+from models.flow import inference_with_onset_splice
 
 from eval.results_stage2 import load_masking, load_flow
 from eval.audio_domain_quality import si_sdr, waveform_mse
@@ -126,7 +127,7 @@ def load_done_indices(output_path):
 @torch.no_grad()
 def process_batch(batch, global_idx0, mask_model, flow_model, encoder, vocoder,
                    cfg_scale, n_steps, cfg_warmup_steps, device, compute_audio,
-                   speaker=None):
+                   speaker=None, onset_pad_frames=0, solver="euler"):
     mixture      = batch["mixture_mel"].to(device)
     target       = batch["target_mel"].to(device)
     ref_wav      = batch["reference_wav"].to(device)
@@ -136,9 +137,9 @@ def process_batch(batch, global_idx0, mask_model, flow_model, encoder, vocoder,
 
     d_vec = encoder(ref_wav)
     stage1_out, _ = mask_model(mixture, d_vec)
-    stage2_out = flow_model.inference(
-        stage1_out, d_vec, cfg_scale=cfg_scale, n_steps=n_steps,
-        cfg_warmup_steps=cfg_warmup_steps,
+    stage2_out = inference_with_onset_splice(
+        flow_model, stage1_out, d_vec, cfg_scale=cfg_scale, n_steps=n_steps,
+        cfg_warmup_steps=cfg_warmup_steps, pad_frames=onset_pad_frames, solver=solver,
     )
 
     frame_mask = make_frame_mask(valid_frames, target.shape[-1], target.device)
@@ -318,7 +319,24 @@ if __name__ == "__main__":
                          help="Cap total samples evaluated (default: full dataset, ~2620).")
     parser.add_argument("--cfg_scale", type=float, default=None)
     parser.add_argument("--n_steps", type=int, default=None)
-    parser.add_argument("--cfg_warmup_steps", type=int, default=0)
+    parser.add_argument("--solver", default=None, choices=["euler", "heun", "midpoint"],
+                         help="ODE integrator for Stage 2. 'euler' (default) is the paper's method "
+                              "and what every number in docs/ used. 'heun'/'midpoint' are 2nd-order "
+                              "and cost 2 velocity evals per step, so halve --n_steps to hold the "
+                              "compute budget fixed. Default: cfg.inference.solver, else euler.")
+    parser.add_argument("--reference_length", type=float, default=None,
+                         help="Seconds of enrollment audio for the speaker encoder. Overrides "
+                              "cfg.audio.reference_length in place so it reaches the dataset. "
+                              "Default: the config value (3.0).")
+    parser.add_argument("--cfg_warmup_steps", type=int, default=None,
+                         help="Euler steps run at cfg_scale=1.0 before applying the full cfg_scale "
+                              "(see FlowMatchingModule.inference). 0 = current behavior. "
+                              "Default: cfg.inference.cfg_warmup_steps, else 0.")
+    parser.add_argument("--onset_pad_frames", type=int, default=None,
+                         help="Silence frames prepended to Stage 2's input and dropped again, to "
+                              "repair the frame-0 onset damping (see models/flow.py "
+                              "inference_with_onset_splice). 0 = current behavior, bit-identical. "
+                              "Default: cfg.inference.onset_pad_frames, else 0.")
     parser.add_argument("--skip_audio_domain", action="store_true",
                          help="Skip vocoding + SI-SDR + verification accuracy (the "
                               "expensive part on CPU). Recommended for a full "
@@ -347,10 +365,23 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.seed)
 
+    # In place so LibriSpeechTSEDataset (which reads self.cfg.audio) sees it too.
+    if args.reference_length is not None:
+        cfg.audio.reference_length = args.reference_length
+
     cfg_scale = args.cfg_scale if args.cfg_scale is not None else cfg.inference.cfg_scale
     n_steps = args.n_steps if args.n_steps is not None else cfg.inference.flow_steps
+    onset_pad_frames = (args.onset_pad_frames if args.onset_pad_frames is not None
+                        else int(getattr(cfg.inference, "onset_pad_frames", 0)))
+    cfg_warmup_steps = (args.cfg_warmup_steps if args.cfg_warmup_steps is not None
+                        else int(getattr(cfg.inference, "cfg_warmup_steps", 0)))
+    solver = args.solver if args.solver is not None else str(getattr(cfg.inference, "solver", "euler"))
 
     print(f"[FullEval] Device: {device}  cfg_scale={cfg_scale}  n_steps={n_steps}"
+          f"  cfg_warmup_steps={cfg_warmup_steps}"
+          f"  onset_pad_frames={onset_pad_frames}"
+          f"  reference_length={getattr(cfg.audio, 'reference_length', 3.0)}"
+          f"  solver={solver}"
           f"  audio_domain={'off' if args.skip_audio_domain else 'on'}")
 
     encoder = SpeakerEncoder(
@@ -399,9 +430,11 @@ if __name__ == "__main__":
 
             records = process_batch(
                 batch, global_idx0, mask_model, flow_model, encoder, vocoder,
-                cfg_scale, n_steps, args.cfg_warmup_steps, device,
+                cfg_scale, n_steps, cfg_warmup_steps, device,
                 compute_audio=not args.skip_audio_domain,
                 speaker=batch["target_speaker"],
+                onset_pad_frames=onset_pad_frames,
+                solver=solver,
             )
 
             for rec in records:

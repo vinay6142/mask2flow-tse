@@ -39,6 +39,7 @@ from data.augment import load_audio
 from data.mel import MelSpectrogramExtractor, pad_or_trim, segment_waveform
 from eval.results_stage2 import load_masking, load_flow
 from models.speaker_encoder import SpeakerEncoder
+from models.flow import inference_with_onset_splice
 from inference.vocoder import mel_to_audio_griffinlim, load_hifigan_generator, mel_to_audio_hifigan
 
 
@@ -100,8 +101,14 @@ def extract_target_speaker(
     vocoder_ckpt="checkpoints_vocoder/vocoder_best.pt",
     vocoder_config="configs/vocoder.yaml",
     overlap_sec=2.0,
+    onset_pad_frames=None,
+    cfg_warmup_steps=None,
 ):
     sr = cfg.audio.sample_rate
+    if onset_pad_frames is None:
+        onset_pad_frames = int(getattr(cfg.inference, "onset_pad_frames", 0))
+    if cfg_warmup_steps is None:
+        cfg_warmup_steps = int(getattr(cfg.inference, "cfg_warmup_steps", 0))
 
     mel_extractor = MelSpectrogramExtractor(
         sample_rate=sr, n_mels=cfg.mel.n_mels, n_fft=cfg.mel.n_fft,
@@ -145,10 +152,15 @@ def extract_target_speaker(
             chunk = chunk.unsqueeze(0)
 
             stage1_out, _ = mask_model(chunk, d_vec)
-            stage2_out = flow_model.inference(
-                stage1_out, d_vec,
+            # Onset repair applies to the utterance's true frame 0 only; interior
+            # chunks have real left context and show no damping (job 11174).
+            stage2_out = inference_with_onset_splice(
+                flow_model, stage1_out, d_vec,
                 cfg_scale=cfg.inference.cfg_scale,
                 n_steps=cfg.inference.flow_steps,
+                cfg_warmup_steps=cfg_warmup_steps,
+                solver=str(getattr(cfg.inference, "solver", "euler")),
+                pad_frames=onset_pad_frames if start == 0 else 0,
             )
             stage2_chunks.append(stage2_out[0])
 
@@ -188,6 +200,16 @@ if __name__ == "__main__":
                          help="Cross-fade overlap in seconds between consecutive "
                               "chunks, used only when input audio is longer than "
                               "segment_length (default 10s).")
+    parser.add_argument("--cfg_warmup_steps", type=int, default=None,
+                         help="Euler steps run at cfg_scale=1.0 before applying the full cfg_scale "
+                              "(see FlowMatchingModule.inference). 0 = current behavior. "
+                              "Default: cfg.inference.cfg_warmup_steps, else 0.")
+    parser.add_argument("--onset_pad_frames", type=int, default=None,
+                         help="Silence frames prepended to Stage 2's input and dropped again, to "
+                              "repair the frame-0 onset damping (see models/flow.py "
+                              "inference_with_onset_splice). Applied to the first chunk only. "
+                              "0 = current behavior, bit-identical. "
+                              "Default: cfg.inference.onset_pad_frames, else 0.")
     args = parser.parse_args()
 
     cfg = OmegaConf.load(args.config)
@@ -197,4 +219,6 @@ if __name__ == "__main__":
         args.mask_ckpt, args.flow_ckpt, args.out,
         vocoder=args.vocoder, vocoder_ckpt=args.vocoder_ckpt,
         vocoder_config=args.vocoder_config, overlap_sec=args.overlap_sec,
+        onset_pad_frames=args.onset_pad_frames,
+        cfg_warmup_steps=args.cfg_warmup_steps,
     )
