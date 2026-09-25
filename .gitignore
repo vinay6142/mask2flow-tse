@@ -24,6 +24,10 @@ logs_v2/
 logs_vocoder/
 scripts/logs/
 
+# Per-sample eval records -- regenerable, ~13MB each, 1GB+ total
+outputs/results/
+outputs/listening_samples_current/
+
 # Generated audio + misc stray dirs
 outputs/*.wav
 *.wav
