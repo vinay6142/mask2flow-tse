@@ -6,6 +6,14 @@
 audio:
   sample_rate: 16000
   segment_length: 10          # seconds per training chunk
+  reference_length: 3.0       # seconds of enrollment audio fed to the speaker encoder.
+                              # Until 2026-09-17 this key did not exist and every consumer
+                              # fell back to a hardcoded 3.0 (data/librispeech.py, and the
+                              # standalone eval scripts), so no number in docs/ has ever
+                              # used anything else. Enrollment length is a known lever in
+                              # target-speaker extraction -- it conditions BOTH stages -- so
+                              # it is worth sweeping, but changing it invalidates comparisons
+                              # against existing results: re-run the battery before adopting.
 
 # Mel Spectrogram
 # Parameters match Whisper exactly for plug-and-play ASR
@@ -78,7 +86,17 @@ train_flow:
 data:
   librispeech_path: "data/raw/LibriSpeech"
   libri2mix_path: "data/raw/Libri2Mix"
-  rir_path: "data/raw/RIRS"
+  # Points at the simulated_rirs SUBTREE, not the RIRS_NOISES root. openslr
+  # resource 28 ships pointsource_noises/ (843 ordinary noise recordings) and
+  # real_rirs_isotropic_noises/ (417, RIRs mixed with isotropic noise) next to
+  # the genuine simulated RIRs, and data/augment.py RIRLoader takes
+  # rglob("*.wav") over whatever this points at -- so the root would convolve
+  # speech with noise clips as if they were impulse responses, on the 34% of
+  # training samples that draw the reverb condition. Before 2026-09-19 this
+  # path did not exist at all and RIRLoader fell back to synthetic RIRs, so no
+  # existing checkpoint is affected; the hazard only appeared once the real
+  # RIRs landed (job 11219).
+  rir_path: "data/raw/RIRS/RIRS_NOISES/simulated_rirs"
   output_path: "data/processed"
 
   # Training splits (with 200GB use all three)
@@ -113,6 +131,29 @@ inference:
                               # 85.7/80.0/77.0, low-SNR 78.7 -> 80.3%, for -0.09dB SI-SDR and
                               # +0.5pp catastrophic. Accuracy plateaus here; 3.0 gains no accuracy
                               # and raises outliers. See docs timeline entries 27-29.
+  solver: "euler"             # ODE integrator for Stage 2: euler | heun | midpoint.
+                              # "euler" is the paper's method and what every number in docs/ used.
+                              # heun/midpoint are 2nd-order and cost 2 velocity evaluations per
+                              # step, so compare them at HALF the flow_steps to hold runtime fixed
+                              # (heun @ 2 steps == euler @ 4 in forward passes). Added 2026-09-18;
+                              # only Euler had ever been tried. NOT adopted -- validate on the full
+                              # battery before changing this.
+  cfg_warmup_steps: 0         # Euler steps run at cfg_scale=1.0 (no guidance amplification) before
+                              # switching to the full cfg_scale. At t=0 x_t == x_enh exactly, and
+                              # ||v_cond - v_uncond|| there runs 5-40x its later magnitude (see
+                              # FlowMatchingModule.inference), which cfg_scale multiplies into an
+                              # oversized first step. 0 = the behavior every number in docs/ was
+                              # measured with. Job 11176 saw 2 give mel-MSE -11% and SI-SDR +0.48dB
+                              # with nothing worse, but on only 24 samples and never on the accuracy
+                              # battery -- raise this only after run_eval_candidate_gpu.sh confirms.
+  onset_pad_frames: 0         # Silence frames prepended to Stage 2's input and dropped again, to
+                              # repair the frame-0 onset damping measured in job 11174 (first speech
+                              # burst -4.08dB median vs ground truth; interior onsets are clean, so
+                              # it is a position-0 effect). 0 = the behavior every number in docs/
+                              # was measured with. 12-25 roughly halved the damping in the sweep;
+                              # see models/flow.py inference_with_onset_splice. NOT yet adopted --
+                              # raise this only after run_eval_candidate_gpu.sh confirms the full
+                              # battery holds, since it costs a second Stage-2 pass per utterance.
   device: "cuda"
 
 # Paths
