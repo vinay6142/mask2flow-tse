@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 import torchaudio
+import soundfile as sf
 from tqdm import tqdm
 
 # ── paths ─────────────────────────────────────────────────────
@@ -58,6 +59,13 @@ MINIMAL_SPLITS = [
 ALL_SPLITS = list(SPLITS.keys())
 
 
+def _size_gb(size_str: str) -> float:
+    """'23.1 GB' / '337 MB' -> float GB."""
+    value, unit = size_str.split()
+    value = float(value)
+    return value / 1024.0 if unit.upper() == "MB" else value
+
+
 def download_librispeech(splits: list):
     """
     Download LibriSpeech splits using torchaudio.
@@ -65,15 +73,26 @@ def download_librispeech(splits: list):
     """
     ROOT.mkdir(parents=True, exist_ok=True)
 
-    total_size = sum(
-        SPLITS[s] for s in splits if s in SPLITS
-    )
+    # SPLITS values are human-readable strings ("23.1 GB"), so summing them
+    # directly raises TypeError -- which it did on every call, since this ran
+    # before any split was touched. Nobody hit it because the LibriSpeech data
+    # already on disk was fetched some other way; job 11217 was the first real
+    # run of this function. Parse to GB instead of summing strings.
+    total_gb = sum(_size_gb(SPLITS[s]) for s in splits if s in SPLITS)
 
     print(f"\n{'─'*50}")
     print(f"  Downloading LibriSpeech")
     print(f"  Splits  : {splits}")
+    print(f"  Total   : ~{total_gb:.1f} GB compressed (extraction needs about")
+    print(f"            that much again transiently)")
     print(f"  Save to : {LIBRISPEECH.absolute()}")
     print(f"{'─'*50}")
+
+    # Job 11219 lost train-clean-360 to a transient "Connection reset by peer"
+    # after 2h43m, and because the except below only printed and continued, the
+    # run still ended with "Download complete!" -- the failure was one line in a
+    # 13MB log. Collect failures and make the caller exit non-zero instead.
+    failed = []
 
     for split in splits:
         size = SPLITS.get(split, "unknown")
@@ -101,6 +120,9 @@ def download_librispeech(splits: list):
             print(f"    ERROR: {e}")
             print(f"    Try manual download from:")
             print(f"    https://www.openslr.org/12/")
+            failed.append(split)
+
+    return failed
 
 
 def download_wham():
@@ -209,12 +231,16 @@ def verify_downloads():
             n_flac = len(list(split_path.rglob("*.flac")))
             print(f"  LibriSpeech/{split}: {n_flac} files")
 
-            # load one sample to verify it works
+            # load one sample to verify it works. soundfile, NOT torchaudio.load:
+            # the installed torchaudio delegates .load() to torchcodec, which is
+            # not present on this cluster (job 11219 crashed here). data/augment.py
+            # load_audio() already reads via soundfile for exactly this reason, so
+            # this now verifies with the same reader the pipeline actually uses.
             if n_flac > 0:
                 sample = next(split_path.rglob("*.flac"))
-                wav, sr = torchaudio.load(str(sample))
+                data, sr = sf.read(str(sample), dtype="float32", always_2d=True)
                 print(f"    Sample: {sample.name} "
-                      f"({wav.shape[1]/sr:.1f}s, {sr}Hz) ✅")
+                      f"({data.shape[0]/sr:.1f}s, {sr}Hz) ✅")
     else:
         print(f"  LibriSpeech: not found ❌")
 
@@ -309,7 +335,7 @@ if __name__ == "__main__":
         print(f"\n  Mode: all (~60 GB)")
 
     # download
-    download_librispeech(splits)
+    failed = download_librispeech(splits)
 
     if args.rirs:
         download_rirs()
@@ -318,6 +344,15 @@ if __name__ == "__main__":
         download_wham()
 
     verify_downloads()
+
+    if failed:
+        # Exit non-zero so a 10-hour sbatch job cannot report success while a
+        # split is silently missing, as job 11219 did with train-clean-360.
+        print(f"\n{'='*50}")
+        print(f"  INCOMPLETE -- these splits FAILED: {failed}")
+        print(f"  Re-run this script; the splits that succeeded are skipped.")
+        print(f"{'='*50}")
+        sys.exit(1)
 
     print(f"\n{'='*50}")
     print(f"  Download complete!")
