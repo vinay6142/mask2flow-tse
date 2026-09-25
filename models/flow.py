@@ -333,6 +333,12 @@ class DiTBlock(nn.Module):
 
 # ── Flow Matching Module ───────────────────────────────────────────────────────
 
+# ODE integrators available to inference(). "euler" is the paper's method and
+# what every number in docs/ was produced with; the 2nd-order pair cost two
+# velocity evaluations per step, so hold n_steps*evals constant when comparing.
+SOLVERS = ("euler", "heun", "midpoint")
+
+
 class FlowMatchingModule(nn.Module):
     """
     Mask2Flow-TSE Stage 2: rectified flow matching with DiT.
@@ -572,6 +578,7 @@ class FlowMatchingModule(nn.Module):
         cfg_scale:        float = 1.0,
         n_steps:          int   = 1,
         cfg_warmup_steps: int   = 0,
+        solver:           str   = "euler",
     ) -> torch.Tensor:
         """
         Single-step Euler inference — Equation (17).
@@ -606,34 +613,132 @@ class FlowMatchingModule(nn.Module):
             cfg_warmup_steps: number of initial steps to run at cfg_scale=1.0
                                (no guidance amplification) before switching to
                                the full cfg_scale. 0 = current/original behavior.
+            solver   : ODE integrator. "euler" (default, the paper's and every
+                       number in docs/) takes 1 velocity evaluation per step.
+                       "heun" and "midpoint" are 2nd-order and take 2 per step,
+                       so compare them at HALF the n_steps to hold the function
+                       evaluation count — and therefore the runtime — fixed.
+                       Added 2026-09-18: only Euler had ever been tried here,
+                       and a flow-matching trajectory integrated with a 2nd-order
+                       method usually lands closer for the same budget.
         Returns:
             y_hat: (B, 80, T) predicted clean spectrogram
         """
+        if solver not in SOLVERS:
+            raise ValueError(f"solver must be one of {SOLVERS}, got {solver!r}")
+
         self.eval()
         B = x_enh.shape[0]
 
         x = x_enh.clone()
         dt = 1.0 / n_steps
 
-        for step in range(n_steps):
-            t = torch.full((B,), step * dt, device=x.device)
-            step_cfg_scale = 1.0 if step < cfg_warmup_steps else cfg_scale
-
+        def velocity(x_at, t_val, step_idx):
+            """Guided velocity at (x_at, t_val). Factored out so the higher-order
+            solvers can evaluate it at intermediate points; the euler path below
+            calls it exactly once per step, in the original order, so it stays
+            bit-identical to the pre-2026-09-18 behaviour."""
+            t = torch.full((B,), t_val, device=x_at.device)
+            step_cfg_scale = 1.0 if step_idx < cfg_warmup_steps else cfg_scale
             if step_cfg_scale > 1.0:
                 # conditional velocity
-                v_cond   = self.forward(x, t, d_vector)
+                v_cond   = self.forward(x_at, t, d_vector)
                 # unconditional velocity (null speaker)
-                v_uncond = self.forward(x, t, d_vector,
+                v_uncond = self.forward(x_at, t, d_vector,
                                         force_cfg_drop=True)
                 # classifier-free guidance
-                v = v_uncond + step_cfg_scale * (v_cond - v_uncond)
-            else:
-                v = self.forward(x, t, d_vector)
+                return v_uncond + step_cfg_scale * (v_cond - v_uncond)
+            return self.forward(x_at, t, d_vector)
 
-            # Euler step
-            x = x + v * dt
+        for step in range(n_steps):
+            t0 = step * dt
+
+            if solver == "euler":
+                # Euler step
+                x = x + velocity(x, t0, step) * dt
+
+            elif solver == "heun":
+                # predictor-corrector: average the slope at the current point
+                # and at the Euler-predicted endpoint. 2 velocity evals/step.
+                v1 = velocity(x, t0, step)
+                v2 = velocity(x + v1 * dt, min(t0 + dt, 1.0), step)
+                x = x + 0.5 * (v1 + v2) * dt
+
+            elif solver == "midpoint":
+                # step with the slope measured half-way. 2 velocity evals/step.
+                v1 = velocity(x, t0, step)
+                v2 = velocity(x + v1 * (dt * 0.5), t0 + dt * 0.5, step)
+                x = x + v2 * dt
 
         return x
+
+
+# ── Onset-damping mitigation ──────────────────────────────────────────────────
+ONSET_PAD_VALUE = -11.5   # data/mel.py pad_or_trim's silence default, log(1e-5)
+
+
+@torch.no_grad()
+def inference_with_onset_splice(
+    flow_model:       "FlowMatchingModule",
+    x_enh:            torch.Tensor,
+    d_vector:         torch.Tensor,
+    cfg_scale:        float = 1.0,
+    n_steps:          int   = 1,
+    cfg_warmup_steps: int   = 0,
+    pad_frames:       int   = 0,
+    splice_frames:    int   = 100,
+    xfade_frames:     int   = 20,
+    solver:           str   = "euler",
+) -> torch.Tensor:
+    """inference(), with the frame-0 onset damping optionally repaired.
+
+    pad_frames=0 (the default) returns flow_model.inference(...) untouched, so
+    every existing caller stays bit-identical until it opts in.
+
+    Why this exists (eval/diag_onset_padding.py, job 11174): Stage 2 damps the
+    FIRST speech burst of an utterance -- -4.08 dB median, worst -16 -- while
+    interior onsets after silence are clean (+0.29 dB). So it is a POSITION-0
+    effect, not an acoustic one: frame 0 is the only frame with no left context
+    for the DiT's RoPE attention, and Stage 2 generates its mel rather than
+    scaling the mixture the way Stage 1 does, so it has no plausible level to
+    fall back on. A silent lead-in moves the weak region into frames that are
+    dropped again before vocoding.
+
+    Padding the whole utterance is not free: it halves the damping (-4.57 ->
+    -2.11 dB median) but costs 0.24dB SI-SDR and 2.4% mel MSE spread over all
+    10s, which fails the promotion bar. Splicing takes the padded run's first
+    `splice_frames` and the unpadded run's remainder, so everything past the
+    crossfade is bit-identical to current behaviour and the utterance-averaged
+    metrics can only move through the region that actually improved. Job 11175
+    confirmed the splice reproduces the padded run's onset to the decimal.
+
+    Costs a second Stage-2 forward pass when enabled.
+
+    NOTE for chunked callers: this repairs position 0 of the tensor it is given,
+    so pass pad_frames > 0 ONLY for the chunk starting at the true beginning of
+    the utterance (start == 0). Interior chunks have genuine left context and
+    show no defect.
+    """
+    base = flow_model.inference(x_enh, d_vector, cfg_scale=cfg_scale, n_steps=n_steps,
+                                cfg_warmup_steps=cfg_warmup_steps, solver=solver)
+    if pad_frames <= 0:
+        return base
+
+    pad = torch.full((x_enh.shape[0], x_enh.shape[1], pad_frames), ONSET_PAD_VALUE,
+                     device=x_enh.device, dtype=x_enh.dtype)
+    padded = flow_model.inference(torch.cat([pad, x_enh], dim=-1), d_vector,
+                                  cfg_scale=cfg_scale, n_steps=n_steps,
+                                  cfg_warmup_steps=cfg_warmup_steps,
+                                  solver=solver)[..., pad_frames:]
+
+    out = base.clone()
+    K = min(splice_frames, out.shape[-1])
+    out[..., :K] = padded[..., :K]
+    x = min(xfade_frames, out.shape[-1] - K)
+    if x > 0:
+        w = torch.linspace(1.0, 0.0, x, device=out.device, dtype=out.dtype)
+        out[..., K:K + x] = w * padded[..., K:K + x] + (1 - w) * base[..., K:K + x]
+    return out
 
 
 # ── Sanity check ──────────────────────────────────────────────────────────────
